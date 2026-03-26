@@ -1,579 +1,524 @@
-// ============================================
-// Read Tool - 文件读取工具
-// ============================================
+/**
+ * Tool Implementations — Based on Extracted Real Code
+ *
+ * Reverse-engineered from claude_code_agent.js v2.1.83
+ *
+ * Obfuscated name mapping:
+ *   C8       → executeShellCommand (shell wrapper, module g8q pos ~831100)
+ *   U$       → execa (process spawning library)
+ *   yo       → readFileContent (file read, module HN pos 825026)
+ *   uw_      → writeFileAtomic (atomic write, module HN pos 827401)
+ *   b8q      → detectEncoding (encoding detection, module EJ8 pos 824644)
+ *   F3       → resolveSymlink (symlink resolution)
+ *   x8q      → detectLineEndings (CRLF detection)
+ *   AT       → getFs (get filesystem module)
+ *   BR4      → BINARY_EXTENSIONS (binary file extension set, pos 839300)
+ *   eJ8      → isBinaryContent (byte-level binary detection)
+ *   Tq       → shellQuote (shell argument quoting, module g8q)
+ *   B8q      → SECONDS_IN_MINUTE = 60
+ *   d8q      → MS_IN_SECOND = 1000
+ *
+ * Source confidence:
+ *   [CONFIRMED] — Directly extracted from minified code (complete source)
+ *   [INFERRED]  — Reconstructed from call patterns
+ *   [SPECULATIVE] — Reasonable implementation guess
+ */
 
-import { BaseTool } from './registry';
-import { z } from 'zod';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execFile, ExecFileOptions } from 'child_process';
+
+// ============================================================================
+// Constants [CONFIRMED]
+// ============================================================================
+
+/** [CONFIRMED] 60 seconds → obfuscated as B8q */
+const SECONDS_IN_MINUTE = 60;
+
+/** [CONFIRMED] 1000 ms → obfuscated as d8q */
+const MS_IN_SECOND = 1000;
+
+/** [CONFIRMED] Default shell timeout: 10 minutes */
+const DEFAULT_SHELL_TIMEOUT = 10 * SECONDS_IN_MINUTE * MS_IN_SECOND; // 600000ms
+
+/** [CONFIRMED] Default max buffer: 1MB */
+const DEFAULT_MAX_BUFFER = 1024 * 1024; // 1MB
 
 /**
- * Read 工具参数 Schema
+ * Binary file extensions set.
+ * Obfuscated: BR4 (pos 839300)
+ * [CONFIRMED] — extracted from code
  */
-const ReadSchema = z.object({
-  file_path: z.string().describe('The absolute path to the file to read'),
-  limit: z.number().optional().describe('The number of lines to read'),
-  offset: z.number().optional().describe('The line number to start reading from')
-});
+export const BINARY_EXTENSIONS = new Set([
+  // Images
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.svg',
+  '.tiff', '.tif', '.psd', '.raw', '.cr2', '.nef',
+  // Documents
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.odt', '.ods', '.odp',
+  // Executables / Libraries
+  '.exe', '.dll', '.so', '.dylib', '.a', '.lib', '.o', '.obj',
+  '.bin', '.elf', '.mach',
+  // Archives
+  '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar',
+  '.zst', '.lz4', '.lzma',
+  // Bytecode
+  '.wasm', '.pyc', '.pyo', '.class', '.beam',
+  // Databases
+  '.sqlite', '.db', '.sqlite3', '.mdb', '.accdb',
+  // Media
+  '.mp3', '.mp4', '.avi', '.mkv', '.wav', '.flac', '.ogg',
+  '.m4a', '.m4v', '.webm', '.mov', '.wmv',
+  // Fonts
+  '.ttf', '.otf', '.woff', '.woff2', '.eot',
+  // Other binary
+  '.iso', '.dmg', '.pkg', '.deb', '.rpm',
+  '.swf', '.fla',
+  '.dat', '.idx', '.pack',
+]);
 
-type ReadParams = z.infer<typeof ReadSchema>;
+// ============================================================================
+// Shell Execution — C8() [CONFIRMED]
+// ============================================================================
+
+/** Shell execution result */
+export interface ShellResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  error?: string;
+}
+
+/** Shell execution options */
+export interface ShellOptions {
+  abortSignal?: AbortSignal;
+  timeout?: number;
+  preserveOutputOnError?: boolean;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  maxBuffer?: number;
+  shell?: string | boolean;
+  stdin?: string;
+  input?: string;
+}
 
 /**
- * Read 工具
- * 使用 Bun File API 零拷贝读取文件
+ * Execute a shell command. NEVER rejects — always resolves with result.
+ *
+ * Obfuscated name: C8 (module g8q, pos ~831100)
+ *
+ * [CONFIRMED] — Complete source extracted from minified code:
+ *
+ * ```javascript
+ * function C8(command, args, {
+ *   abortSignal, timeout = 10 * B8q * d8q,
+ *   preserveOutputOnError = true, cwd, env,
+ *   maxBuffer, shell, stdin, input
+ * }) {
+ *   return new Promise((resolve) => {
+ *     U$(command, args, {/*...* /}).then((result) => {
+ *       if (result.failed) { resolve({stdout, stderr, code, error}); }
+ *       else { resolve({stdout, stderr, code: 0}); }
+ *     }).catch((err) => { resolve({stdout: "", stderr: "", code: 1}); });
+ *   });
+ * }
+ * ```
+ *
+ * Key characteristics:
+ * - Uses U$ (execa) for process spawning
+ * - NEVER rejects — catches all errors
+ * - Default timeout: 10 minutes
+ * - Default maxBuffer: 1MB
+ * - Supports abort signals for cancellation
+ * - preserveOutputOnError captures partial output on failure
  */
-export class ReadTool extends BaseTool {
-  name = 'Read';
-  description = 'Reads a file from the local filesystem';
+export function executeShellCommand(
+  command: string,
+  args: string[] = [],
+  options: ShellOptions = {}
+): Promise<ShellResult> {
+  const {
+    abortSignal,
+    timeout = DEFAULT_SHELL_TIMEOUT,
+    preserveOutputOnError = true,
+    cwd,
+    env,
+    maxBuffer = DEFAULT_MAX_BUFFER,
+    shell = true,
+    stdin,
+    input,
+  } = options;
 
-  input_schema = {
-    type: 'object' as const,
-    properties: {
-      file_path: {
-        type: 'string',
-        description: 'The absolute path to the file to read'
-      },
-      limit: {
-        type: 'number',
-        description: 'The number of lines to read'
-      },
-      offset: {
-        type: 'number',
-        description: 'The line number to start reading from'
-      }
-    },
-    required: ['file_path']
-  };
+  return new Promise<ShellResult>((resolve) => {
+    // [CONFIRMED] Uses execa (U$) under the hood
+    // Simplified to use Node.js child_process since execa is not directly available
+    const execOptions: ExecFileOptions = {
+      timeout,
+      maxBuffer,
+      cwd,
+      env: env ? { ...process.env, ...env } : undefined,
+      shell: shell === true ? '/bin/bash' : (shell || undefined),
+      signal: abortSignal,
+    };
 
-  async execute(params: ReadParams): Promise<string> {
-    const { file_path, limit, offset = 0 } = params;
-
-    // 验证路径
-    this.validateFilePath(file_path);
-
-    try {
-      // 使用 Bun File API (零拷贝)
-      const file = Bun.file(file_path);
-
-      // 检查文件是否存在
-      const exists = await file.exists();
-      if (!exists) {
-        throw new Error(`File not found: ${file_path}`);
-      }
-
-      // 读取文件内容
-      const content = await file.text();
-
-      // 如果没有 limit,返回全部内容
-      if (!limit) {
-        return this.formatWithLineNumbers(content);
-      }
-
-      // 分页读取
-      const lines = content.split('\n');
-      const selectedLines = lines.slice(offset, offset + limit);
-
-      return this.formatWithLineNumbers(selectedLines.join('\n'), offset);
-
-    } catch (error: any) {
-      throw new Error(`Failed to read file: ${error.message}`);
-    }
-  }
-
-  /**
-   * 添加行号格式化
-   */
-  private formatWithLineNumbers(content: string, startLine: number = 0): string {
-    const lines = content.split('\n');
-    const maxLineNum = startLine + lines.length;
-    const padding = maxLineNum.toString().length;
-
-    return lines
-      .map((line, idx) => {
-        const lineNum = (startLine + idx + 1).toString().padStart(padding, ' ');
-        return `${lineNum}→${line}`;
-      })
-      .join('\n');
-  }
-}
-
-// ============================================
-// Write Tool - 文件写入工具
-// ============================================
-
-import { z } from 'zod';
-
-const WriteSchema = z.object({
-  file_path: z.string().describe('The absolute path to the file to write'),
-  content: z.string().describe('The content to write to the file')
-});
-
-type WriteParams = z.infer<typeof WriteSchema>;
-
-export class WriteTool extends BaseTool {
-  name = 'Write';
-  description = 'Writes content to a file on the local filesystem';
-
-  input_schema = {
-    type: 'object' as const,
-    properties: {
-      file_path: {
-        type: 'string',
-        description: 'The absolute path to the file to write'
-      },
-      content: {
-        type: 'string',
-        description: 'The content to write to the file'
-      }
-    },
-    required: ['file_path', 'content']
-  };
-
-  async execute(params: WriteParams): Promise<{ success: boolean; bytesWritten: number }> {
-    const { file_path, content } = params;
-
-    // 验证路径
-    this.validateFilePath(file_path);
-
-    try {
-      // 使用 Bun.write (高效写入)
-      const bytesWritten = await Bun.write(file_path, content);
-
-      return {
-        success: true,
-        bytesWritten
-      };
-
-    } catch (error: any) {
-      throw new Error(`Failed to write file: ${error.message}`);
-    }
-  }
-}
-
-// ============================================
-// Edit Tool - 文件编辑工具 (Myers Diff)
-// ============================================
-
-import { z } from 'zod';
-import { myersDiff, applyDiff } from '../utils/diff';
-
-const EditSchema = z.object({
-  file_path: z.string().describe('The absolute path to the file to edit'),
-  old_string: z.string().describe('The text to replace'),
-  new_string: z.string().describe('The text to replace it with'),
-  replace_all: z.boolean().optional().describe('Replace all occurrences')
-});
-
-type EditParams = z.infer<typeof EditSchema>;
-
-export class EditTool extends BaseTool {
-  name = 'Edit';
-  description = 'Performs exact string replacements in files';
-
-  input_schema = {
-    type: 'object' as const,
-    properties: {
-      file_path: {
-        type: 'string',
-        description: 'The absolute path to the file to edit'
-      },
-      old_string: {
-        type: 'string',
-        description: 'The text to replace'
-      },
-      new_string: {
-        type: 'string',
-        description: 'The text to replace it with'
-      },
-      replace_all: {
-        type: 'boolean',
-        description: 'Replace all occurrences'
-      }
-    },
-    required: ['file_path', 'old_string', 'new_string']
-  };
-
-  async execute(params: EditParams): Promise<{ success: boolean; diff: string }> {
-    const { file_path, old_string, new_string, replace_all } = params;
-
-    // 验证路径
-    this.validateFilePath(file_path);
-
-    try {
-      // 读取文件
-      const file = Bun.file(file_path);
-      const content = await file.text();
-
-      // 检查 old_string 是否存在
-      if (!content.includes(old_string)) {
-        throw new Error('old_string not found in file');
-      }
-
-      let newContent: string;
-
-      if (replace_all) {
-        // 替换所有出现
-        newContent = content.replaceAll(old_string, new_string);
-      } else {
-        // 精确替换 (只替换第一个)
-        const index = content.indexOf(old_string);
-        if (index === -1) {
-          throw new Error('old_string not found in file');
-        }
-
-        newContent =
-          content.slice(0, index) +
-          new_string +
-          content.slice(index + old_string.length);
-
-        // 检查是否有多个匹配
-        const remaining = content.slice(index + old_string.length);
-        if (remaining.includes(old_string)) {
-          console.warn(
-            'WARNING: old_string appears multiple times in file. ' +
-            'Only the first occurrence was replaced. ' +
-            'Use replace_all=true to replace all occurrences.'
-          );
+    // For shell=true, we pass command as string via execFile with shell option
+    const child = execFile(
+      command,
+      args,
+      execOptions,
+      (error, stdout, stderr) => {
+        if (error) {
+          if (preserveOutputOnError) {
+            resolve({
+              stdout: (stdout || '').toString(),
+              stderr: (stderr || '').toString(),
+              code: (error as NodeJS.ErrnoException & { code?: number }).code
+                ? 1
+                : ((error as any).exitCode ?? 1),
+              error: error.message || 'Command failed',
+            });
+          } else {
+            resolve({
+              stdout: '',
+              stderr: '',
+              code: (error as any).exitCode ?? 1,
+            });
+          }
+        } else {
+          resolve({
+            stdout: (stdout || '').toString(),
+            stderr: (stderr || '').toString(),
+            code: 0,
+          });
         }
       }
-
-      // 计算 diff
-      const diff = myersDiff(content, newContent);
-
-      // 写入文件
-      await Bun.write(file_path, newContent);
-
-      return {
-        success: true,
-        diff: this.formatDiff(diff)
-      };
-
-    } catch (error: any) {
-      throw new Error(`Failed to edit file: ${error.message}`);
-    }
-  }
-
-  /**
-   * 格式化 diff 输出
-   */
-  private formatDiff(diff: any[]): string {
-    return diff
-      .map(d => {
-        if (d.type === 'added') return `+ ${d.content}`;
-        if (d.type === 'removed') return `- ${d.content}`;
-        return `  ${d.content}`;
-      })
-      .join('\n');
-  }
-}
-
-// ============================================
-// Bash Tool - 命令执行工具
-// ============================================
-
-import { z } from 'zod';
-
-const BashSchema = z.object({
-  command: z.string().describe('The command to execute'),
-  cwd: z.string().optional().describe('The working directory'),
-  env: z.record(z.string()).optional().describe('Environment variables'),
-  timeout: z.number().optional().describe('Timeout in milliseconds')
-});
-
-type BashParams = z.infer<typeof BashSchema>;
-
-export class BashTool extends BaseTool {
-  name = 'Bash';
-  description = 'Executes a bash command';
-
-  input_schema = {
-    type: 'object' as const,
-    properties: {
-      command: {
-        type: 'string',
-        description: 'The command to execute'
-      },
-      cwd: {
-        type: 'string',
-        description: 'The working directory'
-      },
-      env: {
-        type: 'object',
-        description: 'Environment variables'
-      },
-      timeout: {
-        type: 'number',
-        description: 'Timeout in milliseconds'
-      }
-    },
-    required: ['command']
-  };
-
-  async execute(params: BashParams): Promise<{
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-  }> {
-    const { command, cwd, env, timeout = 30000 } = params;
-
-    try {
-      // 使用 Bun.spawn 执行命令
-      const proc = Bun.spawn(['sh', '-c', command], {
-        cwd: cwd || process.cwd(),
-        env: { ...process.env, ...env },
-        stdout: 'pipe',
-        stderr: 'pipe'
-      });
-
-      // 设置超时
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          proc.kill();
-          reject(new Error(`Command timed out after ${timeout}ms`));
-        }, timeout);
-      });
-
-      // 等待命令完成
-      const [exitCode, stdout, stderr] = await Promise.race([
-        Promise.all([
-          proc.exited,
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text()
-        ]),
-        timeoutPromise
-      ]);
-
-      return {
-        exitCode,
-        stdout,
-        stderr
-      };
-
-    } catch (error: any) {
-      throw new Error(`Failed to execute command: ${error.message}`);
-    }
-  }
-}
-
-// ============================================
-// Glob Tool - 文件匹配工具
-// ============================================
-
-import { z } from 'zod';
-
-const GlobSchema = z.object({
-  pattern: z.string().describe('The glob pattern to match'),
-  path: z.string().optional().describe('The directory to search in')
-});
-
-type GlobParams = z.infer<typeof GlobSchema>;
-
-export class GlobTool extends BaseTool {
-  name = 'Glob';
-  description = 'Fast file pattern matching';
-
-  input_schema = {
-    type: 'object' as const,
-    properties: {
-      pattern: {
-        type: 'string',
-        description: 'The glob pattern to match (e.g., "**/*.ts")'
-      },
-      path: {
-        type: 'string',
-        description: 'The directory to search in (defaults to current directory)'
-      }
-    },
-    required: ['pattern']
-  };
-
-  async execute(params: GlobParams): Promise<string[]> {
-    const { pattern, path = '.' } = params;
-
-    try {
-      // 使用 Bun.Glob
-      const glob = new Bun.Glob(pattern);
-      const matches: string[] = [];
-
-      for await (const match of glob.scan({ cwd: path })) {
-        matches.push(match);
-      }
-
-      // 按修改时间排序 (最新的在前)
-      const sorted = await this.sortByModifiedTime(matches, path);
-
-      return sorted;
-
-    } catch (error: any) {
-      throw new Error(`Failed to execute glob: ${error.message}`);
-    }
-  }
-
-  /**
-   * 按修改时间排序
-   */
-  private async sortByModifiedTime(
-    files: string[],
-    basePath: string
-  ): Promise<string[]> {
-    const fileStats = await Promise.all(
-      files.map(async file => {
-        try {
-          const filePath = require('path').join(basePath, file);
-          const stat = await Bun.file(filePath).stat();
-          return {
-            file,
-            mtime: stat?.mtime || new Date(0)
-          };
-        } catch {
-          return {
-            file,
-            mtime: new Date(0)
-          };
-        }
-      })
     );
 
-    return fileStats
-      .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
-      .map(f => f.file);
+    // [CONFIRMED] Support stdin input
+    if (input && child.stdin) {
+      child.stdin.write(input);
+      child.stdin.end();
+    }
+  });
+}
+
+// ============================================================================
+// File Read — yo() [CONFIRMED]
+// ============================================================================
+
+/** File read result */
+export interface FileReadResult {
+  content: string;
+  encoding: BufferEncoding;
+  lineEndings: 'LF' | 'CRLF' | 'mixed';
+}
+
+/**
+ * Read file content with encoding detection and CRLF normalization.
+ *
+ * Obfuscated name: yo (module HN, pos 825026)
+ *
+ * [CONFIRMED] — Complete source extracted:
+ *
+ * ```javascript
+ * function yo(path) {
+ *   let fs = AT();
+ *   let {resolvedPath, isSymlink} = F3(fs, path);
+ *   if (isSymlink) log(`Reading through symlink: ${path} -> ${resolvedPath}`);
+ *   let encoding = b8q(resolvedPath);
+ *   let content = fs.readFileSync(resolvedPath, {encoding});
+ *   let lineEndings = x8q(content.slice(0, 4096));
+ *   return {content: content.replaceAll('\r\n', '\n'), encoding, lineEndings};
+ * }
+ * ```
+ *
+ * Key characteristics:
+ * - Resolves symlinks before reading (F3)
+ * - Auto-detects encoding (b8q) — utf-8, latin1, etc.
+ * - Detects line endings (x8q) from first 4096 bytes
+ * - Normalizes CRLF to LF
+ */
+export function readFileContent(filePath: string): FileReadResult {
+  // Step 1: Symlink resolution [CONFIRMED]
+  const { resolvedPath, isSymlink } = resolveSymlink(filePath);
+  if (isSymlink) {
+    // In original code: log(`Reading through symlink: ${path} -> ${resolvedPath}`)
+  }
+
+  // Step 2: Encoding detection [CONFIRMED]
+  const encoding = detectEncoding(resolvedPath);
+  if (encoding === null) {
+    throw new Error(`Binary file detected: ${filePath}`);
+  }
+
+  // Step 3: Read content [CONFIRMED]
+  const content = fs.readFileSync(resolvedPath, { encoding });
+
+  // Step 4: Line ending detection [CONFIRMED] — only first 4096 bytes
+  const lineEndings = detectLineEndings(content.slice(0, 4096));
+
+  // Step 5: CRLF normalization [CONFIRMED]
+  return {
+    content: content.replaceAll('\r\n', '\n'),
+    encoding,
+    lineEndings,
+  };
+}
+
+// ============================================================================
+// File Write — uw_() [CONFIRMED]
+// ============================================================================
+
+/**
+ * Atomically write file content with permission preservation.
+ *
+ * Obfuscated name: uw_ (module HN, pos 827401)
+ *
+ * [CONFIRMED] — Complete source extracted:
+ *
+ * ```javascript
+ * function uw_(path, content, options = {encoding: "utf-8"}) {
+ *   let fs = AT();
+ *   let resolvedPath = path;
+ *   try { let target = fs.readlinkSync(path);
+ *     resolvedPath = isAbsolute(target) ? target : resolve(dirname(path), target);
+ *   } catch {}
+ *   let tmpPath = `${resolvedPath}.tmp.${process.pid}.${Date.now()}`;
+ *   let mode;
+ *   try { mode = fs.statSync(resolvedPath).mode; } catch {}
+ *   try {
+ *     writeFileSync(tmpPath, content, {encoding, flush: true});
+ *     if (mode !== undefined) chmodSync(tmpPath, mode);
+ *     fs.renameSync(tmpPath, resolvedPath);
+ *   } catch {
+ *     try { fs.unlinkSync(tmpPath); } catch {}
+ *     writeFileSync(resolvedPath, content, options);
+ *   }
+ * }
+ * ```
+ *
+ * Key characteristics:
+ * - Atomic write pattern: write to temp → rename
+ * - Writes through symlinks to real file
+ * - Preserves original file permissions (mode)
+ * - Fallback: direct write if atomic rename fails (cross-device)
+ * - Uses {flush: true} to ensure data hits disk
+ */
+export function writeFileAtomic(
+  filePath: string,
+  content: string,
+  options: { encoding?: BufferEncoding } = { encoding: 'utf-8' }
+): void {
+  const { encoding = 'utf-8' } = options;
+
+  // Step 1: Resolve symlinks [CONFIRMED]
+  let resolvedPath = filePath;
+  try {
+    const target = fs.readlinkSync(filePath);
+    resolvedPath = path.isAbsolute(target)
+      ? target
+      : path.resolve(path.dirname(filePath), target);
+  } catch {
+    // Not a symlink, use original path
+  }
+
+  // Step 2: Ensure directory exists [INFERRED]
+  const dir = path.dirname(resolvedPath);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // Directory already exists or cannot create
+  }
+
+  // Step 3: Temp file name [CONFIRMED]
+  const tmpPath = `${resolvedPath}.tmp.${process.pid}.${Date.now()}`;
+
+  // Step 4: Preserve original permissions [CONFIRMED]
+  let mode: number | undefined;
+  try {
+    mode = fs.statSync(resolvedPath).mode;
+  } catch {
+    // New file, no existing permissions
+  }
+
+  // Step 5: Atomic write: temp → rename [CONFIRMED]
+  try {
+    fs.writeFileSync(tmpPath, content, { encoding, flush: true } as any);
+    if (mode !== undefined) {
+      fs.chmodSync(tmpPath, mode);
+    }
+    fs.renameSync(tmpPath, resolvedPath); // Atomic!
+  } catch {
+    // Step 6: Fallback to direct write [CONFIRMED]
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // Cleanup temp file
+    }
+    fs.writeFileSync(resolvedPath, content, { encoding });
   }
 }
 
-// ============================================
-// Grep Tool - 代码搜索工具 (Ripgrep)
-// ============================================
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
-import { z } from 'zod';
+/**
+ * Resolve symlinks for a file path.
+ * Obfuscated: F3
+ * [CONFIRMED] — used in yo() before reading
+ */
+export function resolveSymlink(filePath: string): {
+  resolvedPath: string;
+  isSymlink: boolean;
+} {
+  try {
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      const target = fs.readlinkSync(filePath);
+      const resolvedPath = path.isAbsolute(target)
+        ? target
+        : path.resolve(path.dirname(filePath), target);
+      return { resolvedPath, isSymlink: true };
+    }
+    return { resolvedPath: filePath, isSymlink: false };
+  } catch {
+    return { resolvedPath: filePath, isSymlink: false };
+  }
+}
 
-const GrepSchema = z.object({
-  pattern: z.string().describe('The regular expression pattern to search for'),
-  path: z.string().optional().describe('File or directory to search in'),
-  output_mode: z.enum(['content', 'files_with_matches', 'count']).optional(),
-  glob: z.string().optional().describe('Glob pattern for file filtering'),
-  type: z.string().optional().describe('File type to search'),
-  multiline: z.boolean().optional().describe('Enable multiline mode')
-});
+/**
+ * Detect file encoding by checking BOM and binary content.
+ * Obfuscated: b8q (module EJ8, pos 824644)
+ *
+ * [CONFIRMED] — extracted logic:
+ * 1. Read first 8192 bytes
+ * 2. Check BOM markers (UTF-8, UTF-16LE, UTF-16BE)
+ * 3. Check for null bytes (binary indicator)
+ * 4. Default to utf-8
+ *
+ * Returns null if binary file detected.
+ */
+export function detectEncoding(filePath: string): BufferEncoding | null {
+  const buffer = Buffer.alloc(8192);
+  let bytesRead: number;
 
-type GrepParams = z.infer<typeof GrepSchema>;
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
+    fs.closeSync(fd);
+  } catch {
+    return 'utf-8'; // Default on error
+  }
 
-export class GrepTool extends BaseTool {
-  name = 'Grep';
-  description = 'Fast content search using regular expressions';
+  const slice = buffer.slice(0, bytesRead);
 
-  input_schema = {
-    type: 'object' as const,
-    properties: {
-      pattern: {
-        type: 'string',
-        description: 'The regular expression pattern to search for'
-      },
-      path: {
-        type: 'string',
-        description: 'File or directory to search in'
-      },
-      output_mode: {
-        type: 'string',
-        enum: ['content', 'files_with_matches', 'count'],
-        description: 'Output mode'
-      },
-      glob: {
-        type: 'string',
-        description: 'Glob pattern for file filtering'
-      },
-      type: {
-        type: 'string',
-        description: 'File type to search (e.g., "js", "py")'
-      },
-      multiline: {
-        type: 'boolean',
-        description: 'Enable multiline mode'
-      }
-    },
-    required: ['pattern']
-  };
+  // [CONFIRMED] BOM detection
+  if (slice[0] === 0xEF && slice[1] === 0xBB && slice[2] === 0xBF) return 'utf-8';
+  if (slice[0] === 0xFF && slice[1] === 0xFE) return 'utf16le';
+  if (slice[0] === 0xFE && slice[1] === 0xFF) return 'utf16le'; // BE treated as LE in Node
 
-  async execute(params: GrepParams): Promise<any> {
-    const {
-      pattern,
-      path = '.',
-      output_mode = 'content',
-      glob,
-      type,
-      multiline
-    } = params;
+  // [CONFIRMED] Null byte detection → binary
+  for (let i = 0; i < slice.length; i++) {
+    if (slice[i] === 0) return null; // Binary file
+  }
 
-    try {
-      // 构建 ripgrep 命令
-      const args = ['rg', pattern, path];
+  return 'utf-8'; // Default
+}
 
-      // 输出模式
-      switch (output_mode) {
-        case 'content':
-          args.push('-n'); // 显示行号
-          break;
-        case 'files_with_matches':
-          args.push('-l');
-          break;
-        case 'count':
-          args.push('-c');
-          break;
-      }
+/**
+ * Detect line ending style from a text sample.
+ * Obfuscated: x8q
+ * [CONFIRMED] — detects from first 4096 bytes
+ */
+export function detectLineEndings(sample: string): 'LF' | 'CRLF' | 'mixed' {
+  const crlfCount = (sample.match(/\r\n/g) || []).length;
+  const lfOnly = (sample.match(/(?<!\r)\n/g) || []).length;
 
-      // 文件过滤
-      if (glob) {
-        args.push('--glob', glob);
-      }
+  if (crlfCount > 0 && lfOnly > 0) return 'mixed';
+  if (crlfCount > 0) return 'CRLF';
+  return 'LF';
+}
 
-      if (type) {
-        args.push('--type', type);
-      }
+/**
+ * Check if a file is binary by extension.
+ * Uses the BR4 set [CONFIRMED, pos 839300]
+ */
+export function isBinaryByExtension(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
 
-      // 多行模式
-      if (multiline) {
-        args.push('--multiline');
-      }
+/**
+ * Check if content is binary by byte analysis.
+ * Obfuscated: eJ8
+ * [INFERRED] — checks first 8192 bytes for null bytes and control characters
+ */
+export function isBinaryContent(buffer: Buffer): boolean {
+  const checkLength = Math.min(buffer.length, 8192);
+  let nullCount = 0;
+  let controlCount = 0;
 
-      // 执行 ripgrep (嵌入式二进制)
-      const proc = Bun.spawn(args, {
-        stdout: 'pipe',
-        stderr: 'pipe'
-      });
-
-      const [exitCode, stdout, stderr] = await Promise.all([
-        proc.exited,
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text()
-      ]);
-
-      // ripgrep 退出码: 0=找到, 1=未找到, 2=错误
-      if (exitCode === 2) {
-        throw new Error(stderr || 'Ripgrep error');
-      }
-
-      return this.parseOutput(stdout, output_mode);
-
-    } catch (error: any) {
-      throw new Error(`Failed to execute grep: ${error.message}`);
+  for (let i = 0; i < checkLength; i++) {
+    if (buffer[i] === 0) nullCount++;
+    if (buffer[i] < 32 && buffer[i] !== 9 && buffer[i] !== 10 && buffer[i] !== 13) {
+      controlCount++;
     }
   }
 
-  /**
-   * 解析输出
-   */
-  private parseOutput(output: string, mode: string): any {
-    switch (mode) {
-      case 'files_with_matches':
-        return output.trim().split('\n').filter(Boolean);
+  // [INFERRED] Any null bytes = binary
+  if (nullCount > 0) return true;
 
-      case 'count':
-        const lines = output.trim().split('\n');
-        return lines.map(line => {
-          const [file, count] = line.split(':');
-          return { file, count: parseInt(count, 10) };
-        });
+  // [SPECULATIVE] High ratio of control characters = binary
+  if (controlCount / checkLength > 0.1) return true;
 
-      case 'content':
-      default:
-        return output;
-    }
+  return false;
+}
+
+// ============================================================================
+// Error Classes [CONFIRMED, pos 800705 module dq]
+// ============================================================================
+
+/**
+ * Shell execution error.
+ * Obfuscated: part of dq module (pos 800705)
+ * [CONFIRMED]
+ */
+export class ShellError extends Error {
+  constructor(
+    message: string,
+    public readonly code: number,
+    public readonly stdout: string,
+    public readonly stderr: string
+  ) {
+    super(message);
+    this.name = 'ShellError';
+  }
+}
+
+/**
+ * Abort error — thrown when operation is cancelled.
+ * Obfuscated: part of dq module (pos 800705)
+ * [CONFIRMED]
+ */
+export class AbortError extends Error {
+  constructor(message: string = 'Operation aborted') {
+    super(message);
+    this.name = 'AbortError';
+  }
+}
+
+/**
+ * Config parse error.
+ * Obfuscated: part of dq module (pos 800705)
+ * [CONFIRMED]
+ */
+export class ConfigParseError extends Error {
+  constructor(
+    message: string,
+    public readonly filePath: string
+  ) {
+    super(message);
+    this.name = 'ConfigParseError';
   }
 }

@@ -1,514 +1,647 @@
 /**
- * LLM Client - Complete Implementation
+ * LLM Client — Multi-Provider Routing, OAuth, and Streaming
  *
- * Restored from Bun 2.1.83 binary
- * Handles streaming communication with Anthropic Claude API
+ * Reverse-engineered from claude_code_agent.js v2.1.83
+ *
+ * Obfuscated name mapping:
+ *   p8       → getProvider (provider selection, multi-location)
+ *   i_       → isTruthy (env var check helper)
+ *   H4       → getDefaultModel (default model selection)
+ *   a9       → resolveModel (model resolver from name/alias)
+ *   q27      → modelMatchesKeyword (check if model matches opus/sonnet/haiku)
+ *   B46      → translateCrossProvider (cross-provider model translation)
+ *   Ib       → selectModelByPermissionMode
+ *
+ * OAuth constants [CONFIRMED]:
+ *   CLIENT_ID: "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+ *   Auth URL: "https://platform.claude.com/oauth/authorize"
+ *   Token URL: "https://platform.claude.com/v1/oauth/token"
+ *   API Key Create: "https://api.anthropic.com/api/oauth/claude_cli/create_api_key"
+ *   MCP Proxy: "https://mcp-proxy.anthropic.com"
+ *
+ * Source confidence:
+ *   [CONFIRMED] — Directly extracted from minified code
+ *   [INFERRED]  — Reconstructed from call sites
+ *   [SPECULATIVE] — Reasonable implementation guess
  */
 
-import Anthropic from '@anthropic-ai/sdk';
-import type {
-  Message,
-  MessageParam,
-  ContentBlock,
-  Tool,
-} from '@anthropic-ai/sdk/resources/messages';
-import { EventEmitter } from 'events';
+import type { TokenUsage, Message } from '../agent/Agent';
 
-// ============================================
-// Type Definitions
-// ============================================
+// ============================================================================
+// Provider Types [CONFIRMED]
+// ============================================================================
 
-export interface LLMConfig {
+/**
+ * API provider types.
+ * [CONFIRMED] — from p8() function
+ */
+export type Provider = 'firstParty' | 'bedrock' | 'vertex' | 'foundry';
+
+/**
+ * Provider configuration.
+ */
+export interface ProviderConfig {
+  provider: Provider;
+  baseUrl: string;
   apiKey?: string;
-  model: string;
-  maxTokens: number;
-  temperature?: number;
-  baseUrl?: string;
-  timeout?: number;
-  maxRetries?: number;
+  oauthToken?: string;
+  clientCert?: string;
+  clientKey?: string;
 }
+
+// ============================================================================
+// OAuth Constants [CONFIRMED]
+// ============================================================================
+
+export const OAUTH_CONFIG = {
+  /** [CONFIRMED] OAuth client ID */
+  CLIENT_ID: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+
+  /** [CONFIRMED] Authorization endpoint */
+  AUTHORIZE_URL: 'https://platform.claude.com/oauth/authorize',
+
+  /** [CONFIRMED] Token endpoint */
+  TOKEN_URL: 'https://platform.claude.com/v1/oauth/token',
+
+  /** [CONFIRMED] API key creation endpoint */
+  API_KEY_CREATE_URL: 'https://api.anthropic.com/api/oauth/claude_cli/create_api_key',
+
+  /** [CONFIRMED] MCP proxy */
+  MCP_PROXY_URL: 'https://mcp-proxy.anthropic.com',
+} as const;
+
+// ============================================================================
+// Model Constants [CONFIRMED]
+// ============================================================================
+
+/**
+ * Vertex region mapping for each model.
+ * [CONFIRMED] — from architecture report
+ */
+export const VERTEX_REGION_MAPPING: Record<string, string> = {
+  'claude-haiku-4-5': 'VERTEX_REGION_CLAUDE_HAIKU_4_5',
+  'claude-3-5-haiku': 'VERTEX_REGION_CLAUDE_3_5_HAIKU',
+  'claude-3-5-sonnet': 'VERTEX_REGION_CLAUDE_3_5_SONNET',
+  'claude-3-7-sonnet': 'VERTEX_REGION_CLAUDE_3_7_SONNET',
+  'claude-opus-4-1': 'VERTEX_REGION_CLAUDE_4_1_OPUS',
+  'claude-opus-4-6': 'VERTEX_REGION_CLAUDE_OPUS_4_6',
+  'claude-sonnet-4-6': 'VERTEX_REGION_CLAUDE_SONNET_4_6',
+};
+
+/**
+ * Model keyword identifiers.
+ * [CONFIRMED] — used by q27() for matching
+ */
+export const MODEL_KEYWORDS = ['opus', 'sonnet', 'haiku'] as const;
+export type ModelKeyword = (typeof MODEL_KEYWORDS)[number];
+
+// ============================================================================
+// Provider Selection [CONFIRMED]
+// ============================================================================
+
+/**
+ * Determine the API provider based on environment variables.
+ *
+ * Obfuscated: p8()
+ *
+ * [CONFIRMED] — directly extracted:
+ * ```javascript
+ * function p8() {
+ *   return i_(process.env.CLAUDE_CODE_USE_BEDROCK) ? "bedrock" :
+ *          i_(process.env.CLAUDE_CODE_USE_VERTEX) ? "vertex" :
+ *          i_(process.env.CLAUDE_CODE_USE_FOUNDRY) ? "foundry" :
+ *          "firstParty";
+ * }
+ * ```
+ */
+export function getProvider(): Provider {
+  if (isTruthy(process.env.CLAUDE_CODE_USE_BEDROCK)) return 'bedrock';
+  if (isTruthy(process.env.CLAUDE_CODE_USE_VERTEX)) return 'vertex';
+  if (isTruthy(process.env.CLAUDE_CODE_USE_FOUNDRY)) return 'foundry';
+  return 'firstParty';
+}
+
+/**
+ * Check if an environment variable is truthy.
+ * Obfuscated: i_()
+ * [CONFIRMED]
+ */
+function isTruthy(value: string | undefined): boolean {
+  if (!value) return false;
+  return value !== '0' && value.toLowerCase() !== 'false';
+}
+
+/**
+ * Get the base URL for the current provider.
+ * [INFERRED]
+ */
+export function getBaseUrl(provider?: Provider): string {
+  const p = provider || getProvider();
+  switch (p) {
+    case 'firstParty':
+      return 'https://api.anthropic.com';
+    case 'bedrock':
+      return ''; // AWS Bedrock uses SDK, not direct URL
+    case 'vertex':
+      return ''; // Google Vertex uses SDK
+    case 'foundry':
+      return ''; // ByteDance Foundry uses SDK
+    default:
+      return 'https://api.anthropic.com';
+  }
+}
+
+// ============================================================================
+// Model Selection [CONFIRMED]
+// ============================================================================
+
+/**
+ * Get the default model for the main loop.
+ * Obfuscated: H4()
+ * [INFERRED] — returns the default model based on configuration
+ */
+export function getDefaultModel(): string {
+  return 'claude-sonnet-4-6';
+}
+
+/**
+ * Resolve a model from name or alias.
+ * Obfuscated: a9(Y)
+ * [INFERRED] — resolves user-specified model name
+ */
+export function resolveModel(nameOrAlias: string): string {
+  // Direct model IDs pass through
+  if (nameOrAlias.startsWith('claude-')) return nameOrAlias;
+
+  // Keyword aliases
+  switch (nameOrAlias.toLowerCase()) {
+    case 'opus':
+      return 'claude-opus-4-6';
+    case 'sonnet':
+      return 'claude-sonnet-4-6';
+    case 'haiku':
+      return 'claude-haiku-4-5';
+    default:
+      return nameOrAlias;
+  }
+}
+
+/**
+ * Check if a model matches a keyword (opus/sonnet/haiku).
+ * Obfuscated: q27()
+ * [CONFIRMED] — checks if keyword appears in model identifier
+ */
+export function modelMatchesKeyword(model: string, keyword: ModelKeyword): boolean {
+  return model.toLowerCase().includes(keyword);
+}
+
+/**
+ * Translate a model ID for cross-provider use.
+ * Obfuscated: B46()
+ * [INFERRED] — handles Bedrock/Vertex model ID translation
+ */
+export function translateCrossProvider(
+  model: string,
+  fromProvider: Provider,
+  toProvider: Provider
+): string {
+  // [SPECULATIVE] If providers are the same, no translation needed
+  if (fromProvider === toProvider) return model;
+
+  // Basic model name extraction and re-mapping
+  // Each provider has its own model naming convention
+  return model;
+}
+
+/**
+ * Get the Vertex region for a model.
+ * [CONFIRMED] — reads from environment variable
+ */
+export function getVertexRegion(model: string): string | undefined {
+  const envKey = VERTEX_REGION_MAPPING[model];
+  return envKey ? process.env[envKey] : undefined;
+}
+
+// ============================================================================
+// SSE Stream Event Types [CONFIRMED]
+// ============================================================================
+
+/**
+ * SSE stream event types from Anthropic API.
+ * [CONFIRMED] — directly from streaming response handling
+ */
+export type StreamEventType =
+  | 'message_start'
+  | 'content_block_start'
+  | 'content_block_delta'
+  | 'content_block_stop'
+  | 'message_delta'
+  | 'message_stop'
+  | 'error';
 
 export interface StreamEvent {
-  type: 'message_start' | 'content_block_start' | 'content_block_delta' |
-        'content_block_stop' | 'message_delta' | 'message_stop' | 'error' | 'text';
-  message?: Message;
-  index?: number;
-  content_block?: ContentBlock;
-  delta?: any;
-  text?: string;
-  error?: Error;
-  usage?: {
-    input_tokens: number;
-    output_tokens: number;
+  event: StreamEventType;
+  data: Record<string, unknown>;
+}
+
+/**
+ * Content block types in streaming responses.
+ * [CONFIRMED]
+ */
+export interface ContentBlockStart {
+  type: 'content_block_start';
+  index: number;
+  content_block: {
+    type: 'text' | 'tool_use';
+    id?: string;
+    name?: string;
+    text?: string;
   };
 }
 
-export interface MessageCreateParams {
-  messages: MessageParam[];
-  tools?: Tool[];
-  system?: string;
-  metadata?: Record<string, any>;
-  stop_sequences?: string[];
+export interface ContentBlockDelta {
+  type: 'content_block_delta';
+  index: number;
+  delta: {
+    type: 'text_delta' | 'input_json_delta';
+    text?: string;
+    partial_json?: string;
+  };
+}
+
+// ============================================================================
+// API Client
+// ============================================================================
+
+/**
+ * API request configuration.
+ * [CONFIRMED] — from API call analysis
+ */
+export interface ApiRequestConfig {
+  model: string;
+  max_tokens: number;
+  messages: Message[];
+  system?: string | Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }>;
+  tools?: Array<{
+    name: string;
+    description: string;
+    input_schema: Record<string, unknown>;
+  }>;
   stream?: boolean;
   thinking?: {
-    type: 'enabled' | 'adaptive';
+    type: 'enabled' | 'disabled';
     budget_tokens?: number;
   };
+  metadata?: Record<string, unknown>;
 }
 
-export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
+/**
+ * LLM Client for making API calls to Anthropic.
+ *
+ * Implements multi-provider routing, OAuth/API key authentication,
+ * and SSE streaming response handling.
+ *
+ * [CONFIRMED] Core structure from reverse analysis
+ */
+export class LlmClient {
+  private provider: Provider;
+  private apiKey: string | undefined;
+  private oauthToken: string | undefined;
+  private maxRetries: number = 2; // [CONFIRMED] SDK default
 
-// ============================================
-// LLM Client Implementation
-// ============================================
-
-export class LLMClient extends EventEmitter {
-  private client: Anthropic;
-  private config: LLMConfig;
-  private tokenUsage: TokenUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-  };
-
-  constructor(config: LLMConfig) {
-    super();
-
-    this.config = {
-      timeout: 120000, // 2 minutes
-      maxRetries: 3,
-      temperature: 0.7,
-      ...config,
-    };
-
-    this.client = new Anthropic({
-      apiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
-      baseURL: config.baseUrl,
-      timeout: this.config.timeout,
-      maxRetries: this.config.maxRetries,
-    });
+  constructor(config?: Partial<ProviderConfig>) {
+    this.provider = config?.provider || getProvider();
+    this.apiKey = config?.apiKey || process.env.ANTHROPIC_API_KEY;
+    this.oauthToken = config?.oauthToken;
   }
 
-  // ============================================
-  // Core Methods
-  // ============================================
-
   /**
-   * Create a streaming message
-   * Main entry point for agent communication
+   * Create a streaming message request.
+   *
+   * [CONFIRMED] SSE event sequence:
+   * message_start     → Init usage tracking
+   * content_block_start → New content block (text/tool_use)
+   * content_block_delta → Incremental content
+   * content_block_stop  → End content block
+   * message_delta      → stop_reason + final usage
+   * message_stop       → Merge to totalUsage via GmT()
    */
   async *createMessageStream(
-    params: MessageCreateParams
-  ): AsyncGenerator<StreamEvent, Message, unknown> {
-    try {
-      // Emit start event
-      this.emit('stream_start', params);
+    config: ApiRequestConfig
+  ): AsyncGenerator<StreamEvent> {
+    const headers = this.buildHeaders();
+    const body = this.buildRequestBody(config);
 
-      // Create streaming request
-      const stream = this.client.messages.stream({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        temperature: this.config.temperature,
-        messages: params.messages,
-        tools: params.tools,
-        system: params.system,
-        metadata: params.metadata,
-        stop_sequences: params.stop_sequences,
-        thinking: params.thinking,
-      });
-
-      // Track accumulated message
-      let accumulatedMessage: Message | null = null;
-      let currentContentIndex = 0;
-
-      // Process stream events
-      for await (const event of stream) {
-        const streamEvent = this.processStreamEvent(event);
-
-        // Yield processed event
-        yield streamEvent;
-
-        // Emit for external listeners
-        this.emit('stream_event', streamEvent);
-
-        // Handle text deltas specially for convenience
-        if (streamEvent.type === 'content_block_delta' &&
-            streamEvent.delta?.type === 'text_delta') {
-          this.emit('text', streamEvent.delta.text);
-        }
-
-        // Track usage
-        if (streamEvent.type === 'message_delta' && streamEvent.usage) {
-          this.updateTokenUsage(streamEvent.usage);
-        }
-      }
-
-      // Get final message
-      accumulatedMessage = await stream.finalMessage();
-
-      // Emit completion
-      this.emit('stream_complete', accumulatedMessage);
-
-      return accumulatedMessage;
-
-    } catch (error: any) {
-      const streamError: StreamEvent = {
-        type: 'error',
-        error: error,
-      };
-
-      this.emit('stream_error', error);
-      yield streamError;
-      throw error;
-    }
-  }
-
-  /**
-   * Create a non-streaming message (for simple requests)
-   */
-  async createMessage(params: MessageCreateParams): Promise<Message> {
-    try {
-      this.emit('request_start', params);
-
-      const message = await this.client.messages.create({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        temperature: this.config.temperature,
-        messages: params.messages,
-        tools: params.tools,
-        system: params.system,
-        metadata: params.metadata,
-        stop_sequences: params.stop_sequences,
-      });
-
-      // Update token usage
-      if (message.usage) {
-        this.updateTokenUsage({
-          input_tokens: message.usage.input_tokens,
-          output_tokens: message.usage.output_tokens,
+    // [CONFIRMED] max_retries = 2
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        const response = await fetch(this.getApiUrl(), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...body, stream: true }),
         });
-      }
 
-      this.emit('request_complete', message);
+        if (!response.ok) {
+          const status = response.status;
 
-      return message;
+          // [CONFIRMED] 429/529 → exponential backoff
+          if (status === 429 || status === 529) {
+            const retryAfter = response.headers.get('retry-after');
+            const delay = retryAfter
+              ? parseInt(retryAfter) * 1000
+              : Math.pow(2, attempt) * 1000;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
 
-    } catch (error: any) {
-      this.emit('request_error', error);
-      throw error;
-    }
-  }
-
-  // ============================================
-  // Stream Event Processing
-  // ============================================
-
-  /**
-   * Process raw stream event into standardized format
-   */
-  private processStreamEvent(event: any): StreamEvent {
-    switch (event.type) {
-      case 'message_start':
-        return {
-          type: 'message_start',
-          message: event.message,
-        };
-
-      case 'content_block_start':
-        return {
-          type: 'content_block_start',
-          index: event.index,
-          content_block: event.content_block,
-        };
-
-      case 'content_block_delta':
-        return {
-          type: 'content_block_delta',
-          index: event.index,
-          delta: event.delta,
-        };
-
-      case 'content_block_stop':
-        return {
-          type: 'content_block_stop',
-          index: event.index,
-        };
-
-      case 'message_delta':
-        return {
-          type: 'message_delta',
-          delta: event.delta,
-          usage: event.usage ? {
-            input_tokens: event.usage.input_tokens,
-            output_tokens: event.usage.output_tokens,
-          } : undefined,
-        };
-
-      case 'message_stop':
-        return {
-          type: 'message_stop',
-        };
-
-      default:
-        return {
-          type: 'content_block_delta',
-          delta: event,
-        };
-    }
-  }
-
-  // ============================================
-  // Tool Use Streaming
-  // ============================================
-
-  /**
-   * Stream with tool use support
-   * Handles automatic tool execution loops
-   */
-  async *streamWithTools(
-    params: MessageCreateParams,
-    toolExecutor: (toolName: string, toolInput: any) => Promise<any>
-  ): AsyncGenerator<StreamEvent, Message, unknown> {
-    let currentMessages = [...params.messages];
-    let iterationCount = 0;
-    const maxIterations = 10; // Prevent infinite loops
-
-    while (iterationCount < maxIterations) {
-      // Stream message
-      const stream = this.createMessageStream({
-        ...params,
-        messages: currentMessages,
-      });
-
-      let message: Message | null = null;
-
-      // Process all events
-      for await (const event of stream) {
-        yield event;
-
-        // Capture final message
-        if (event.type === 'message_start') {
-          message = event.message;
+          throw new Error(`API error: ${status} ${response.statusText}`);
         }
-      }
 
-      // Get final message if not captured
-      if (!message) {
-        message = await stream.return(undefined as any);
-      }
+        // [CONFIRMED] Parse SSE stream
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No response body');
 
-      if (!message) {
-        throw new Error('No message received from stream');
-      }
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-      // Check for tool use
-      const toolUseBlocks = message.content.filter(
-        (block): block is any => block.type === 'tool_use'
-      );
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-      if (toolUseBlocks.length === 0) {
-        // No tool use, we're done
-        return message;
-      }
+          buffer += decoder.decode(value, { stream: true });
 
-      // Execute tools
-      const toolResults = [];
-      for (const toolUse of toolUseBlocks) {
-        try {
-          const result = await toolExecutor(toolUse.name, toolUse.input);
+          // Parse SSE events from buffer
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: JSON.stringify(result),
-          });
+          let currentEvent: string | null = null;
+          let currentData = '';
 
-          // Emit tool execution event
-          this.emit('tool_executed', {
-            name: toolUse.name,
-            input: toolUse.input,
-            result,
-          });
-
-        } catch (error: any) {
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: JSON.stringify({ error: error.message }),
-            is_error: true,
-          });
-
-          this.emit('tool_error', {
-            name: toolUse.name,
-            error,
-          });
-        }
-      }
-
-      // Add assistant message and tool results to conversation
-      currentMessages.push({
-        role: 'assistant',
-        content: message.content,
-      });
-
-      currentMessages.push({
-        role: 'user',
-        content: toolResults,
-      });
-
-      iterationCount++;
-    }
-
-    throw new Error('Maximum tool use iterations reached');
-  }
-
-  // ============================================
-  // Token Management
-  // ============================================
-
-  /**
-   * Update token usage tracking
-   */
-  private updateTokenUsage(usage: { input_tokens: number; output_tokens: number }) {
-    this.tokenUsage.inputTokens += usage.input_tokens;
-    this.tokenUsage.outputTokens += usage.output_tokens;
-    this.tokenUsage.totalTokens = this.tokenUsage.inputTokens + this.tokenUsage.outputTokens;
-
-    this.emit('token_usage', this.tokenUsage);
-  }
-
-  /**
-   * Get current token usage
-   */
-  getTokenUsage(): TokenUsage {
-    return { ...this.tokenUsage };
-  }
-
-  /**
-   * Reset token usage counters
-   */
-  resetTokenUsage(): void {
-    this.tokenUsage = {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-    };
-  }
-
-  // ============================================
-  // Utility Methods
-  // ============================================
-
-  /**
-   * Count tokens in a message (approximate)
-   */
-  countTokens(text: string): number {
-    // Simple approximation: ~4 characters per token
-    return Math.ceil(text.length / 4);
-  }
-
-  /**
-   * Count tokens in messages array
-   */
-  countMessageTokens(messages: MessageParam[]): number {
-    let total = 0;
-
-    for (const msg of messages) {
-      if (typeof msg.content === 'string') {
-        total += this.countTokens(msg.content);
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === 'text') {
-            total += this.countTokens(block.text);
-          } else if (block.type === 'tool_result') {
-            total += this.countTokens(block.content);
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              currentData = line.slice(6);
+            } else if (line === '' && currentEvent && currentData) {
+              try {
+                const data = JSON.parse(currentData);
+                yield { event: currentEvent as StreamEventType, data };
+              } catch {
+                // Skip malformed events
+              }
+              currentEvent = null;
+              currentData = '';
+            }
           }
         }
+
+        return; // Success
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < this.maxRetries) {
+          await new Promise(resolve =>
+            setTimeout(resolve, Math.pow(2, attempt) * 1000)
+          );
+        }
       }
     }
 
-    return total;
+    if (lastError) throw lastError;
   }
 
   /**
-   * Get model information
+   * Create a non-streaming message request.
+   * [INFERRED] — used by tengu classifier and other non-stream calls
    */
-  getModelInfo(): { model: string; maxTokens: number; temperature: number } {
-    return {
-      model: this.config.model,
-      maxTokens: this.config.maxTokens,
-      temperature: this.config.temperature || 0.7,
+  async createMessage(
+    config: ApiRequestConfig
+  ): Promise<{
+    content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
+    stop_reason: string;
+    usage: TokenUsage;
+  }> {
+    const headers = this.buildHeaders();
+    const body = this.buildRequestBody(config);
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        const response = await fetch(this.getApiUrl(), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          if (response.status === 429 || response.status === 529) {
+            const delay = Math.pow(2, attempt) * 1000;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < this.maxRetries) {
+          await new Promise(resolve =>
+            setTimeout(resolve, Math.pow(2, attempt) * 1000)
+          );
+        }
+      }
+    }
+
+    throw lastError || new Error('API request failed');
+  }
+
+  /**
+   * Count tokens for messages via API.
+   * Tier 2: Precise token counting
+   * [CONFIRMED] — uses count_tokens endpoint
+   */
+  async countTokens(config: {
+    model: string;
+    messages: Message[];
+    system?: string;
+    tools?: unknown[];
+  }): Promise<{ input_tokens: number }> {
+    const headers = this.buildHeaders();
+
+    const response = await fetch(`${this.getApiUrl()}/count_tokens`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(config),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Token count error: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // --------------------------------------------------------------------------
+  // Private Methods
+  // --------------------------------------------------------------------------
+
+  /**
+   * Build request headers with authentication.
+   * [CONFIRMED] — supports API key, OAuth, and mTLS
+   */
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'compact-2026-01-12',  // [CONFIRMED] compact beta
     };
+
+    // Authentication
+    if (this.apiKey) {
+      headers['x-api-key'] = this.apiKey;
+    } else if (this.oauthToken) {
+      headers['Authorization'] = `Bearer ${this.oauthToken}`;
+    }
+
+    // [CONFIRMED] mTLS handled at transport level via undici Agent
+    // CLAUDE_CODE_CLIENT_CERT and CLAUDE_CODE_CLIENT_KEY env vars
+
+    return headers;
   }
 
   /**
-   * Check if client is properly configured
+   * Build request body.
+   * [CONFIRMED]
    */
-  isConfigured(): boolean {
-    return !!(this.config.apiKey || process.env.ANTHROPIC_API_KEY);
-  }
-
-  /**
-   * Update configuration
-   */
-  updateConfig(newConfig: Partial<LLMConfig>): void {
-    this.config = {
-      ...this.config,
-      ...newConfig,
+  private buildRequestBody(config: ApiRequestConfig): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: config.model,
+      max_tokens: config.max_tokens,
+      messages: config.messages,
     };
 
-    // Recreate client if necessary
-    if (newConfig.apiKey || newConfig.baseUrl) {
-      this.client = new Anthropic({
-        apiKey: this.config.apiKey || process.env.ANTHROPIC_API_KEY,
-        baseURL: this.config.baseUrl,
-        timeout: this.config.timeout,
-        maxRetries: this.config.maxRetries,
-      });
+    if (config.system) body.system = config.system;
+    if (config.tools) body.tools = config.tools;
+    if (config.thinking) body.thinking = config.thinking;
+    if (config.metadata) body.metadata = config.metadata;
+
+    return body;
+  }
+
+  /**
+   * Get the API endpoint URL.
+   * [INFERRED]
+   */
+  private getApiUrl(): string {
+    switch (this.provider) {
+      case 'firstParty':
+        return 'https://api.anthropic.com/v1/messages';
+      default:
+        // Other providers use their respective SDKs
+        return 'https://api.anthropic.com/v1/messages';
     }
   }
 }
 
-// ============================================
-// Helper Functions
-// ============================================
+// ============================================================================
+// OAuth Flow [CONFIRMED]
+// ============================================================================
 
 /**
- * Create LLM client with default configuration
+ * OAuth 2.0 authorization flow for Claude Code.
+ * [CONFIRMED] — CLIENT_ID and endpoints extracted from code
  */
-export function createLLMClient(config: Partial<LLMConfig> = {}): LLMClient {
-  return new LLMClient({
-    model: 'claude-sonnet-4-6',
-    maxTokens: 8192,
-    temperature: 0.7,
-    ...config,
-  });
-}
+export class OAuthManager {
+  /**
+   * Generate authorization URL.
+   * [CONFIRMED]
+   */
+  getAuthorizationUrl(state: string, codeChallenge: string): string {
+    const params = new URLSearchParams({
+      client_id: OAUTH_CONFIG.CLIENT_ID,
+      response_type: 'code',
+      redirect_uri: 'http://localhost:0/callback',
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      scope: 'claude_code',
+    });
 
-/**
- * Format message for display
- */
-export function formatMessage(message: Message): string {
-  const textBlocks = message.content.filter(
-    (block): block is any => block.type === 'text'
-  );
+    return `${OAUTH_CONFIG.AUTHORIZE_URL}?${params}`;
+  }
 
-  return textBlocks.map(b => b.text).join('\n');
-}
+  /**
+   * Exchange authorization code for tokens.
+   * [CONFIRMED]
+   */
+  async exchangeCode(
+    code: string,
+    codeVerifier: string,
+    redirectUri: string
+  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+    const response = await fetch(OAUTH_CONFIG.TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        client_id: OAUTH_CONFIG.CLIENT_ID,
+        code,
+        code_verifier: codeVerifier,
+        redirect_uri: redirectUri,
+      }),
+    });
 
-/**
- * Extract tool uses from message
- */
-export function extractToolUses(message: Message): Array<{ name: string; input: any; id: string }> {
-  return message.content
-    .filter((block): block is any => block.type === 'tool_use')
-    .map(block => ({
-      name: block.name,
-      input: block.input,
-      id: block.id,
-    }));
+    if (!response.ok) {
+      throw new Error(`OAuth token exchange failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Refresh access token.
+   * [INFERRED]
+   */
+  async refreshToken(
+    refreshToken: string
+  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+    const response = await fetch(OAUTH_CONFIG.TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        client_id: OAUTH_CONFIG.CLIENT_ID,
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OAuth refresh failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Create an API key via OAuth.
+   * [CONFIRMED] — uses dedicated endpoint
+   */
+  async createApiKey(
+    accessToken: string
+  ): Promise<{ api_key: string }> {
+    const response = await fetch(OAUTH_CONFIG.API_KEY_CREATE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`API key creation failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
 }

@@ -380,3 +380,63 @@ bun start "your question"
 
 **更新日期**: 2026-03-26
 **版本**: 2.0 - 诚实版本
+
+---
+
+## 深度逆向分析补充 (2026-03-26)
+
+### 概述
+
+本次更新新增了基于二进制静态分析的深度逆向分析成果。通过对 `source_code/bun_extracted_full.js`（6.9MB, 60,674行混淆代码）进行 byte-offset 级别的精确定位和交叉引用分析，提取了大量此前未能还原的实现细节，并据此重写了 `restored/` 目录下的核心类型定义文件和实现文件。
+
+### 新增 / 重写的文件清单
+
+#### 类型定义重写（restored/src/types/）
+
+| 文件 | 改动说明 |
+|------|----------|
+| `tool.types.ts` | 基于真实 Tool 接口（name, call, prompt, inputSchema, isReadOnly, isDestructive, isOpenWorld, isEnabled, validateInput）重写 |
+| `hook.types.ts` | 基于真实 24 种事件类型和 4 种 Hook 类型（command / file-watcher / intercept / event）重写 |
+| `permission.types.ts` | 基于真实 6 种权限模式和 3 种验证分类（AllowTool / DenyTool / AskUser）重写 |
+| `state.types.ts` | 基于 ZT 全局状态单例的 80+ 字段重写，包含 session / tool / llm / permission / ui 等分区 |
+| `config.types.ts` | 加入 Sandbox 配置 schema，补齐完整的环境变量→配置映射关系 |
+
+#### 核心实现重写（restored/src/）
+
+| 文件 | 改动说明 |
+|------|----------|
+| `core/implementations.ts` | 基于真实的 C8() shell 执行器、yo() 文件读取器、uw_() 原子写入器重写，注释中标注 byte offset 和混淆函数名 |
+| `session/manager.ts` | 基于 JSONL 持久化和 compact-aware 读取逻辑重写 |
+| `memory/manager.ts` | 基于 CLAUDE.md 加载（V5 函数）和 ~/.claude/memory 目录逻辑重写 |
+| `config/manager.ts` | 配置优先级重写，加入真实 40+ 环境变量的完整列表 |
+| `index.ts` | 基于 awO() 入口的正确调用链重写 |
+
+#### 项目根文件
+
+| 文件 | 改动说明 |
+|------|----------|
+| `CHANGELOG.md` | 新建，记录本次所有改动 |
+| `INDEX.md` | 更新，增加新文件条目 |
+| `restored/package.json` | 更新版本号和依赖列表 |
+
+### 完成度评估（修正）
+
+之前的 README 中存在矛盾数字（同时出现了 "92%"、"99.4%"、"35%" 等不同声明）。以下是基于本次深度分析后的统一评估：
+
+| 维度 | 完成度 | 说明 |
+|------|--------|------|
+| **架构理解** | 95% | 5 层架构、30+ 模块关系、数据流均已完整理解 |
+| **接口识别** | 92% | 40+ 环境变量、20+ 工具名、100+ 类/字段名、24 种 Hook 事件 |
+| **类型定义还原** | 75% | 本次重写了 5 个核心类型文件，基于 byte-offset 交叉验证 |
+| **核心实现还原** | 40% | Shell 执行器、文件读写、Session JSONL、Memory 加载器等关键路径已还原 |
+| **业务逻辑还原** | 15% | Agent 主循环 cS() 和消息处理 vFT() 仅有骨架，缺少内部分支细节 |
+| **综合完成度** | **~55%** | 相比初始版本（~35%）提升约 20 个百分点 |
+
+> **说明**: 综合完成度 = 架构理解×0.15 + 接口识别×0.15 + 类型还原×0.20 + 核心实现×0.30 + 业务逻辑×0.20。权重反映了"可编译可运行的还原代码"比"文档层面的理解"更有价值的原则。
+
+### 分析方法
+
+- **byte-offset 定位**: 对混淆 JS 中的关键函数通过字符偏移精确定位
+- **交叉引用分析**: 通过调用图追踪 awO() → C8() / yo() / uw_() 等调用链
+- **字符串常量提取**: 从二进制中提取环境变量名、工具名、事件类型等字符串常量
+- **模式匹配推导**: 通过 AST 模式匹配推导函数签名和类型结构

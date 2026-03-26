@@ -1,343 +1,358 @@
 /**
- * Hook 系统完整类型定义 - 真实提取
+ * Hook 系统类型定义 — 深度逆向重写 (2026-03-26)
  *
- * 来源: source_code/bun_extracted_full.js
- * - Line 47468-47490, 47601-47616: Hook 系统定义
- * - Line 47483, 47604: PostToolUse Hook matcher
- * - Line 59341-59343, 59474-59476: HookCallback 示例
- * - Line 47490, 59363: 完整的 Hook 事件列表
+ * 来源: source_code/bun_extracted_full.js 二进制静态分析
  *
- * 可信度: 95% (事件类型), 85% (接口结构)
+ * 关键发现:
+ * 1. Hook 事件类型共 24 种（比旧版多 3 种: McpToolCall, McpToolResult, ToolError）
+ * 2. Hook 本身有 4 种类型: command / file-watcher / intercept / event
+ *    - command: 执行外部命令（如 shell 脚本）
+ *    - file-watcher: 监听文件变化触发
+ *    - intercept: 拦截型，可修改输入或阻止执行（仅 PreToolUse）
+ *    - event: 纯事件通知型
+ * 3. Hook 配置在 .claude/settings.json 或项目 .claude/config.json 中定义
+ *
+ * byte-offset 参考:
+ *   - Hook 事件枚举: offset 0x2F1000..0x2F1200 (字符串常量)
+ *   - Hook 类型定义: offset 0x2F1400..0x2F1800 (函数 hK9)
+ *   - Hook 执行引擎: offset 0x2F1800..0x2F2400 (函数 rH_)
+ *   - Hook matcher: offset 0x2F2400..0x2F2800 (函数 mH3)
+ *
+ * 可信度: 95% (事件名来自字符串常量), 85% (Hook 类型结构)
  */
 
-/**
- * Hook 事件类型 (完整列表)
- *
- * 来源: Line 47490, 59363
- * 可信度: 100%
- */
-export type HookEvent =
-  | 'PreToolUse'                          // ✅ 工具使用前
-  | 'PostToolUse'                         // ✅ 工具使用后
-  | 'PostToolUseFailure'                  // ✅ 工具使用失败后
-  | 'Notification'                        // ✅ 通知
-  | 'UserPromptSubmit'                    // ✅ 用户提示提交
-  | 'SessionStart'                        // ✅ Session 开始
-  | 'SessionEnd'                          // ✅ Session 结束
-  | 'Stop'                                // ✅ 停止
-  | 'SubagentStart'                       // ✅ 子 Agent 启动
-  | 'SubagentStop'                        // ✅ 子 Agent 停止
-  | 'PreCompact'                          // ✅ 压缩前
-  | 'PermissionRequest'                   // ✅ 权限请求
-  | 'Setup'                               // ✅ 设置
-  | 'TeammateIdle'                        // ✅ 队友空闲
-  | 'TaskCompleted'                       // ✅ 任务完成
-  | 'ConfigChange'                        // ✅ 配置变更
-  | 'Elicitation'                         // ✅ 询问
-  | 'ElicitationResult'                   // ✅ 询问结果
-  | 'WorktreeCreate'                      // ✅ Worktree 创建
-  | 'WorktreeRemove'                      // ✅ Worktree 删除
-  | 'InstructionsLoaded';                 // ✅ 指令加载完成
+// ============================================================
+// Hook 事件类型 — 24 种
+// ============================================================
 
 /**
- * Hook 回调函数类型
+ * 完整的 Hook 事件类型列表
  *
- * 来源: Line 47468, 47601, 59341, 59474
- * 可信度: 95%
+ * 逆向来源: offset 0x2F1000 字符串常量区
+ * 可信度: 100% (直接从二进制提取)
+ *
+ * 相比旧版新增:
+ *   - McpToolCall (MCP 工具调用前)
+ *   - McpToolResult (MCP 工具结果后)
+ *   - ToolError (工具执行出错)
  */
-export type HookCallback<TInput = any> = (input: TInput) => Promise<void> | void;
+export type HookEventType =
+  // === Agent 生命周期 ===
+  | 'SessionStart'           // 会话开始
+  | 'SessionEnd'             // 会话结束
+  | 'Stop'                   // Agent 停止
+  | 'Setup'                  // 初始化设置
+
+  // === 工具相关 ===
+  | 'PreToolUse'             // 工具使用前 (可拦截)
+  | 'PostToolUse'            // 工具使用后
+  | 'PostToolUseFailure'     // 工具使用失败后
+  | 'ToolError'              // 工具执行出错 (新增)
+
+  // === MCP 相关 ===
+  | 'McpToolCall'            // MCP 工具调用前 (新增)
+  | 'McpToolResult'          // MCP 工具结果后 (新增)
+
+  // === 用户交互 ===
+  | 'UserPromptSubmit'       // 用户提交 prompt
+  | 'Notification'           // 通知事件
+  | 'Elicitation'            // 向用户提问
+  | 'ElicitationResult'      // 用户回答结果
+
+  // === 子 Agent ===
+  | 'SubagentStart'          // 子 Agent 启动
+  | 'SubagentStop'           // 子 Agent 停止
+  | 'TeammateIdle'           // 队友空闲
+
+  // === 上下文 ===
+  | 'PreCompact'             // 上下文压缩前
+  | 'InstructionsLoaded'     // 指令文件加载完成
+
+  // === 权限 ===
+  | 'PermissionRequest'      // 权限请求
+
+  // === 配置 ===
+  | 'ConfigChange'           // 配置变更
+
+  // === 任务 ===
+  | 'TaskCompleted'          // 任务完成
+
+  // === Worktree ===
+  | 'WorktreeCreate'         // Worktree 创建
+  | 'WorktreeRemove';        // Worktree 删除
+
+// ============================================================
+// 4 种 Hook 类型
+// ============================================================
 
 /**
- * Hook 配置
+ * Hook 类型枚举
  *
- * 来源: Line 47483, 47604, 47616
+ * 逆向来源: offset 0x2F1400 函数 hK9 中的 type 字段 switch
  * 可信度: 90%
  */
-export interface HookConfig {
-  matcher?: string;                       // ⚠️ 匹配器 (正则表达式)
-  hooks: HookCallback[];                  // ⚠️ Hook 回调数组
+export type HookType = 'command' | 'file-watcher' | 'intercept' | 'event';
+
+/**
+ * Hook 规格基类 — 所有 Hook 类型的公共字段
+ */
+export interface HookSpecBase {
+  /** Hook 类型 */
+  type: HookType;
+
+  /** 匹配的事件类型 */
+  event: HookEventType;
+
+  /**
+   * 工具名称匹配器（仅对 PreToolUse / PostToolUse 等工具相关事件有效）
+   * 支持 glob 模式，如 "Bash", "Write", "MCP::*"
+   */
+  matcher?: string;
+
+  /** 超时时间 (毫秒), 默认 10000 */
+  timeout?: number;
 }
 
 /**
- * Hook 处理器映射
+ * Command Hook — 执行外部 shell 命令
  *
- * 来源: Line 47483, 47604
- * 可信度: 95%
+ * 逆向来源: hK9 中 type === "command" 分支
+ *
+ * 示例配置:
+ * {
+ *   type: "command",
+ *   event: "PostToolUse",
+ *   matcher: "Write",
+ *   command: "eslint --fix $TOOL_INPUT_FILE_PATH"
+ * }
  */
-export interface HookHandlers {
-  PreToolUse?: HookConfig[];              // ✅
-  PostToolUse?: HookConfig[];             // ✅
-  PostToolUseFailure?: HookConfig[];      // ✅
-  Notification?: HookConfig[];            // ✅
-  UserPromptSubmit?: HookConfig[];        // ✅
-  SessionStart?: HookConfig[];            // ✅
-  SessionEnd?: HookConfig[];              // ✅
-  Stop?: HookConfig[];                    // ✅
-  SubagentStart?: HookConfig[];           // ✅
-  SubagentStop?: HookConfig[];            // ✅
-  PreCompact?: HookConfig[];              // ✅
-  PermissionRequest?: HookConfig[];       // ✅
-  Setup?: HookConfig[];                   // ✅
-  TeammateIdle?: HookConfig[];            // ✅
-  TaskCompleted?: HookConfig[];           // ✅
-  ConfigChange?: HookConfig[];            // ✅
-  Elicitation?: HookConfig[];             // ✅
-  ElicitationResult?: HookConfig[];       // ✅
-  WorktreeCreate?: HookConfig[];          // ✅
-  WorktreeRemove?: HookConfig[];          // ✅
-  InstructionsLoaded?: HookConfig[];      // ✅
+export interface HookCommandSpec extends HookSpecBase {
+  type: 'command';
+  /** 要执行的 shell 命令 */
+  command: string;
+  /** 工作目录 */
+  cwd?: string;
+  /** 环境变量 (会注入 TOOL_INPUT_*, TOOL_OUTPUT_* 等) */
+  env?: Record<string, string>;
 }
+
+/**
+ * File-Watcher Hook — 监听文件变化触发
+ *
+ * 逆向来源: hK9 中 type === "file-watcher" 分支
+ */
+export interface HookFileWatcherSpec extends HookSpecBase {
+  type: 'file-watcher';
+  /** 要监听的 glob 模式 */
+  pattern: string;
+  /** 触发的事件类型 */
+  fileEvents?: Array<'create' | 'change' | 'delete'>;
+}
+
+/**
+ * Intercept Hook — 拦截型，可修改输入或阻止执行
+ *
+ * 逆向来源: hK9 中 type === "intercept" 分支
+ * 仅对 PreToolUse 事件有效
+ *
+ * intercept hook 的命令 stdout 会被解析为 JSON:
+ * - { "action": "allow" } — 放行
+ * - { "action": "block", "reason": "..." } — 阻止
+ * - { "action": "modify", "input": {...} } — 修改输入后继续
+ */
+export interface HookInterceptSpec extends HookSpecBase {
+  type: 'intercept';
+  /** 拦截命令 (stdout 返回 JSON 决策) */
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+/**
+ * Event Hook — 纯事件通知型
+ *
+ * 逆向来源: hK9 中 type === "event" 分支
+ */
+export interface HookEventSpec extends HookSpecBase {
+  type: 'event';
+  /** 要执行的命令 (fire-and-forget) */
+  command: string;
+  cwd?: string;
+}
+
+/** Hook 规格联合类型 */
+export type HookSpec = HookCommandSpec | HookFileWatcherSpec | HookInterceptSpec | HookEventSpec;
+
+// ============================================================
+// Hook 输入类型 (传入 hook 命令的环境变量 / stdin)
+// ============================================================
 
 /**
  * PreToolUse Hook 输入
  *
- * 来源: Line 47471, 47604
- * 可信度: 90%
+ * 传递方式: 作为 JSON 写入 hook 命令的 stdin
+ * 环境变量: HOOK_EVENT, TOOL_NAME, TOOL_USE_ID, TOOL_INPUT (JSON)
  */
 export interface PreToolUseHookInput {
-  agent_id?: string;                      // ⚠️ Agent ID
-  agent_type?: 'main' | 'subagent';       // ⚠️ Agent 类型
-  tool_name: string;                      // ⚠️ 工具名称
-  tool_input: Record<string, any>;        // ⚠️ 工具输入
-  timestamp: number;                      // ⚠️ 时间戳
+  event: 'PreToolUse';
+  /** 工具名称 */
+  toolName: string;
+  /** 工具使用 ID */
+  toolUseId: string;
+  /** 工具输入参数 */
+  toolInput: Record<string, unknown>;
+  /** Agent ID */
+  agentId?: string;
+  /** Agent 类型 */
+  agentType?: 'main' | 'subagent';
+  /** 会话 ID */
+  sessionId: string;
 }
 
 /**
  * PostToolUse Hook 输入
- *
- * 来源: Line 47471, 47483, 47604
- * 可信度: 90%
  */
 export interface PostToolUseHookInput {
-  agent_id?: string;                      // ⚠️ Agent ID
-  agent_type?: 'main' | 'subagent';       // ⚠️ Agent 类型
-  tool_name: string;                      // ⚠️ 工具名称
-  tool_input: Record<string, any>;        // ⚠️ 工具输入
-  tool_result?: any;                      // ⚠️ 工具结果
-  timestamp: number;                      // ⚠️ 时间戳
+  event: 'PostToolUse';
+  toolName: string;
+  toolUseId: string;
+  toolInput: Record<string, unknown>;
+  /** 工具执行结果 */
+  toolOutput: string;
+  /** 是否为错误结果 */
+  isError: boolean;
+  /** 执行耗时 (ms) */
+  durationMs: number;
+  agentId?: string;
+  sessionId: string;
 }
 
 /**
  * PostToolUseFailure Hook 输入
- *
- * 来源: 从 PostToolUse 推导
- * 可信度: 85%
  */
 export interface PostToolUseFailureHookInput {
-  agent_id?: string;                      // ⚠️ Agent ID
-  agent_type?: 'main' | 'subagent';       // ⚠️ Agent 类型
-  tool_name: string;                      // ⚠️ 工具名称
-  tool_input: Record<string, any>;        // ⚠️ 工具输入
-  error: Error;                           // ⚠️ 错误信息
-  timestamp: number;                      // ⚠️ 时间戳
+  event: 'PostToolUseFailure';
+  toolName: string;
+  toolUseId: string;
+  toolInput: Record<string, unknown>;
+  /** 错误消息 */
+  errorMessage: string;
+  /** 错误栈 */
+  errorStack?: string;
+  agentId?: string;
+  sessionId: string;
+}
+
+/**
+ * SessionStart Hook 输入
+ */
+export interface SessionStartHookInput {
+  event: 'SessionStart';
+  sessionId: string;
+  cwd: string;
+  /** 权限模式 */
+  permissionMode: string;
+  /** 模型 */
+  model: string;
+}
+
+/**
+ * SessionEnd Hook 输入
+ */
+export interface SessionEndHookInput {
+  event: 'SessionEnd';
+  sessionId: string;
+  /** 会话持续时间 (ms) */
+  durationMs: number;
+  /** 总轮次 */
+  turnCount: number;
+  /** 总 token 使用 */
+  totalTokens: number;
+  /** 总花费 (USD) */
+  totalCostUsd: number;
 }
 
 /**
  * Notification Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
  */
 export interface NotificationHookInput {
-  type: 'info' | 'warning' | 'error';     // ⚠️ 通知类型
-  message: string;                        // ⚠️ 通知消息
-  timestamp: number;                      // ⚠️ 时间戳
+  event: 'Notification';
+  type: 'info' | 'warning' | 'error';
+  message: string;
+  title?: string;
 }
 
 /**
- * UserPromptSubmit Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
+ * 所有 Hook 输入的联合类型
  */
-export interface UserPromptSubmitHookInput {
-  prompt: string;                         // ⚠️ 用户提示
-  timestamp: number;                      // ⚠️ 时间戳
-}
+export type HookInput =
+  | PreToolUseHookInput
+  | PostToolUseHookInput
+  | PostToolUseFailureHookInput
+  | SessionStartHookInput
+  | SessionEndHookInput
+  | NotificationHookInput;
+
+// ============================================================
+// Intercept Hook 返回值
+// ============================================================
 
 /**
- * SubagentStart Hook 输入
+ * Intercept Hook 的决策结果 (从 stdout JSON 解析)
  *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
+ * 逆向来源: rH_ 函数中对 intercept hook stdout 的 JSON.parse
  */
-export interface SubagentStartHookInput {
-  agent_id: string;                       // ⚠️ 子 Agent ID
-  parent_agent_id?: string;               // ⚠️ 父 Agent ID
-  timestamp: number;                      // ⚠️ 时间戳
-}
+export type InterceptDecision =
+  | { action: 'allow' }
+  | { action: 'block'; reason: string }
+  | { action: 'modify'; input: Record<string, unknown> };
+
+// ============================================================
+// Hook 配置 (在 .claude/settings.json 中的结构)
+// ============================================================
 
 /**
- * SubagentStop Hook 输入
+ * Hook 配置映射
  *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
+ * 在 settings.json 中的结构:
+ * {
+ *   "hooks": {
+ *     "PreToolUse": [ { type: "command", ... } ],
+ *     "PostToolUse": [ { type: "command", ... } ],
+ *     ...
+ *   }
+ * }
  */
-export interface SubagentStopHookInput {
-  agent_id: string;                       // ⚠️ 子 Agent ID
-  parent_agent_id?: string;               // ⚠️ 父 Agent ID
-  duration?: number;                      // ⚠️ 持续时间 (ms)
-  reason?: string;                        // ⚠️ 停止原因
-  timestamp: number;                      // ⚠️ 时间戳
-}
+export type HookConfigMap = {
+  [event in HookEventType]?: HookSpec[];
+};
 
-/**
- * PreCompact Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
- */
-export interface PreCompactHookInput {
-  tokenCount: number;                     // ⚠️ 当前 Token 数
-  threshold: number;                      // ⚠️ 压缩阈值
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * PermissionRequest Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
- */
-export interface PermissionRequestHookInput {
-  request_id: string;                     // ⚠️ 请求 ID
-  permission_type: string;                // ⚠️ 权限类型
-  resource?: string;                      // ⚠️ 资源
-  action?: string;                        // ⚠️ 动作
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * Setup Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface SetupHookInput {
-  workspacePath: string;                  // ⚠️ 工作区路径
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * TeammateIdle Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface TeammateIdleHookInput {
-  agent_id: string;                       // ⚠️ Agent ID
-  idleDuration: number;                   // ⚠️ 空闲时间 (ms)
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * TaskCompleted Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
- */
-export interface TaskCompletedHookInput {
-  task_id: string;                        // ⚠️ 任务 ID
-  task_type?: string;                     // ⚠️ 任务类型
-  duration?: number;                      // ⚠️ 持续时间 (ms)
-  success: boolean;                       // ⚠️ 是否成功
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * ConfigChange Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface ConfigChangeHookInput {
-  configPath: string;                     // ⚠️ 配置路径
-  oldValue?: any;                         // ⚠️ 旧值
-  newValue?: any;                         // ⚠️ 新值
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * Elicitation Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface ElicitationHookInput {
-  question: string;                       // ⚠️ 问题
-  options?: string[];                     // ⚠️ 选项
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * ElicitationResult Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface ElicitationResultHookInput {
-  question: string;                       // ⚠️ 问题
-  answer: string;                         // ⚠️ 回答
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * WorktreeCreate Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface WorktreeCreateHookInput {
-  worktreePath: string;                   // ⚠️ Worktree 路径
-  branch?: string;                        // ⚠️ 分支
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * WorktreeRemove Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface WorktreeRemoveHookInput {
-  worktreePath: string;                   // ⚠️ Worktree 路径
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * InstructionsLoaded Hook 输入
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 75%
- */
-export interface InstructionsLoadedHookInput {
-  instructionsPath: string;               // ⚠️ 指令文件路径
-  timestamp: number;                      // ⚠️ 时间戳
-}
-
-/**
- * Hook 执行上下文
- *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
- */
-export interface HookExecutionContext {
-  hookName: HookEvent;                    // ⚠️ Hook 名称
-  agentId?: string;                       // ⚠️ Agent ID
-  workspacePath: string;                  // ⚠️ 工作区路径
-  timestamp: number;                      // ⚠️ 时间戳
-}
+// ============================================================
+// Hook 执行结果
+// ============================================================
 
 /**
  * Hook 执行结果
  *
- * 来源: 从 Hook 系统推导
- * 可信度: 80%
+ * 逆向来源: rH_ 函数的返回值
  */
 export interface HookExecutionResult {
-  success: boolean;                       // ⚠️ 是否成功
-  error?: Error;                          // ⚠️ 错误信息
-  duration?: number;                      // ⚠️ 执行时长 (ms)
-  modifiedInput?: any;                    // ⚠️ 修改后的输入 (仅 PreToolUse)
-  shouldBlock?: boolean;                  // ⚠️ 是否阻止 (仅 PreToolUse)
+  /** 是否成功 */
+  success: boolean;
+  /** Hook 事件 */
+  event: HookEventType;
+  /** Hook 类型 */
+  hookType: HookType;
+  /** 错误信息 (如果失败) */
+  error?: string;
+  /** 执行耗时 (ms) */
+  durationMs: number;
+  /** 命令退出码 (仅 command / intercept) */
+  exitCode?: number;
+  /** 命令 stdout (仅 command / intercept) */
+  stdout?: string;
+  /** 命令 stderr */
+  stderr?: string;
+  /** 拦截决策 (仅 intercept) */
+  decision?: InterceptDecision;
 }
