@@ -318,3 +318,16 @@ claude_code_reverse_engineering/
 **文件索引版本**: 3.0.0
 **更新日期**: 2026-03-26
 **总文件数**: ~65
+
+
+## Prompt Extraction (v2.1.85 — npm package analysis)
+
+| File | Description |
+|------|-------------|
+| [`prompts/COMPLETE_SYSTEM_PROMPT_RECONSTRUCTION.md`](prompts/COMPLETE_SYSTEM_PROMPT_RECONSTRUCTION.md) | Complete reconstructed system prompt |
+| [`prompts/README.md`](prompts/README.md) | Extraction methodology and architecture overview |
+| [`prompts/extracted_pieces.txt`](prompts/extracted_pieces.txt) | All 40+ raw extracted pieces |
+| [`prompts/od_function_trace.txt`](prompts/od_function_trace.txt) | Cross-version prompt builder analysis |
+| [`prompts/sections/all_prompt_sections_v2185.txt`](prompts/sections/all_prompt_sections_v2185.txt) | All section builder function bodies |
+| [`prompts/tools/all_tool_prompts_v2185.txt`](prompts/tools/all_tool_prompts_v2185.txt) | All tool prompt functions |
+| [`prompts/extraction_scripts/`](prompts/extraction_scripts/) | Python scripts for extraction |

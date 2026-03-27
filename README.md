@@ -440,3 +440,27 @@ bun start "your question"
 - **交叉引用分析**: 通过调用图追踪 awO() → C8() / yo() / uw_() 等调用链
 - **字符串常量提取**: 从二进制中提取环境变量名、工具名、事件类型等字符串常量
 - **模式匹配推导**: 通过 AST 模式匹配推导函数签名和类型结构
+
+
+---
+
+## 🔑 System Prompt Extraction (v2.1.85)
+
+**NEW**: Complete system prompt reconstruction from the Node.js npm package.
+
+The Bun binary's bytecode barrier (28.1% of functions invisible) was bypassed by using
+`npm pack @anthropic-ai/claude-code` to obtain the fully readable `cli.js` (12.9 MB).
+
+See [`prompts/`](prompts/) for:
+- **Complete reconstructed system prompt** with all 17+ sections
+- **All 14 built-in tool prompts** extracted verbatim
+- **Prompt assembly architecture** (PD function, QF/WXq caching, two-tier assembly)
+- **Cross-version function mapping** (OD→BV→PD)
+- **Extraction scripts** used for the analysis
+
+Key findings:
+- System prompt is assembled from ~17 nullable sections joined with `\n\n`
+- Static/dynamic split marked by `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`
+- Server-side compaction uses `compact-2026-01-12` Beta
+- Tengu security classifier gates auto-mode execution
+- Model constants: `{opus:"claude-opus-4-6", sonnet:"claude-sonnet-4-6", haiku:"claude-haiku-4-5-20251001"}`

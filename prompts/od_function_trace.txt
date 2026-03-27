@@ -1,0 +1,193 @@
+===============================================================================
+OD FUNCTION TRACE REPORT
+===============================================================================
+Date: 2026-03-27
+Target: Claude Code v2.1.83 (Bun binary) & v2.1.31 (Node.js npm)
+
+===============================================================================
+1. EXECUTIVE SUMMARY
+===============================================================================
+
+OD is the "System Prompt Section Builder" function. It takes the tool list,
+model identifier, additional working directories, and MCP clients, and returns
+an array of string sections that are concatenated to form the system prompt.
+
+OD's definition is NOT in the extracted JS source (claude_code_agent.js).
+It exists only in Bun's compiled bytecode, which was not extracted.
+The equivalent function in the Node.js npm package (v2.1.31) is named `BV`.
+
+===============================================================================
+2. WHY OD IS "INVISIBLE" IN THE EXTRACTED CODE
+===============================================================================
+
+FINDING: The Bun binary (v2.1.83) contains a hybrid of:
+  (a) Extracted JS source code (~4.2MB, in claude_code_agent.js)
+  (b) Compiled Bun bytecode (NOT extractable as JS)
+
+OD, along with V5 (=J_), jH (=__), P4, and 1,749 OTHER identifiers (28.1%
+of all called functions), are defined ONLY in the bytecode portion.
+
+Evidence:
+  - OD appears exactly 2 times in the entire 4.2MB JS (both are call sites)
+  - Zero occurrences of: OD=, function OD(, var OD, let OD, const OD
+  - ALL 35+ dependency functions called in bp9's M() closure (Cd_(), F2(),
+    $C(), YH(), l8(), f0(), etc.) are ALSO undefined in the extracted JS
+  - These dependencies are the M() initializers that would set up the scope
+    where OD is defined
+  - Statistical analysis: 1,749 of 6,225 unique function calls (28.1%)
+    reference identifiers with no definition in the file
+
+The Bun bundler compiles frequently-used core modules to bytecode for 
+performance, leaving only the "outer" application code as readable JS.
+The system prompt builder, tool definitions, and core infrastructure are
+all in bytecode.
+
+===============================================================================
+3. OD'S IDENTITY: BV() in Node.js v2.1.31
+===============================================================================
+
+Cross-referencing the Node.js npm package (cli.js, 11.3MB, fully readable JS):
+
+  Bun v2.1.83          Node v2.1.31       Purpose
+  ─────────────────    ────────────────   ──────────────────────────────
+  OD($,u,dirs,O)       BV(z,u,dirs,w)     Build system prompt sections
+  V5()                 J_()               Load CLAUDE.md content
+  jH()                 __()               Load git status / system context
+  Sp9                  ZVq                Main agent class
+  bp9                  GVq                Module init closure
+  P4(sections)         (inline spread)    Concatenate sections into prompt
+
+The call site is IDENTICAL in structure:
+  
+  Bun:  [S,B,U] = await Promise.all([
+          OD($,u,Array.from(I.toolPermissionContext.additionalWorkingDirectories.keys()),O),
+          V5(),
+          p!==void 0?Promise.resolve({}):jH()
+        ])
+
+  Node: [U,g,x] = await Promise.all([
+          BV(z,u,Array.from(m.toolPermissionContext.additionalWorkingDirectories.keys()),w),
+          J_(),
+          typeof X==="string"?Promise.resolve({}):__()
+        ])
+
+===============================================================================
+4. COMPLETE BV/OD FUNCTION SOURCE (from Node.js v2.1.31)
+===============================================================================
+
+async function BV(A,q,K,Y){if(M6(void 0))return["You are Claude Code, Anthropic's official CLI for Claude."];if(r8("tengu_vinteuil_phrase",!1))return I(`[SystemPrompt] path=simple proactive=${Y8z?.isProactiveActive()??!1}`),zzq(A,q,K,Y);let z=Kzq();if(z==="tengu_vinteuil_phrase")return I(`[SystemPrompt] client_data system_prompt_variant=${z}`),zzq(A,q,K,Y);let w=y6(),[H,O,$]=await Promise.all([rT(w),fbA(),Dzq(q,K)]),_=Lq(),J=new Set(A.map((j)=>j.name)),D=H.map((j)=>`/${j.userFacingName()}`).length>0&&J.has(OJ)?`- /<skill-name> (e.g., /commit) is shorthand for users to invoke a user-invocable skill. When executed, the skill gets expanded to a full prompt. Use the ${OJ} tool to execute them. IMPORTANT: Only use ${OJ} for skills listed in its user-invocable skills section - do not guess or use built-in CLI commands.`:"";return[H8z(O),O8z(O),$8z(J),_8z(J),wzq(),J8z(O,J),X8z(),D8z(J,D),GV6,j8z(J),M8z(),...r8("tengu_system_prompt_global_cache",!1)?[MP1]:[],Hzq(),CDA(),Ozq(),$,$zq(_.language),_zq(O),Jzq(Y),Wzq()].filter((j)=>j!==null)}
+
+===============================================================================
+5. BV/OD RETURN VALUE BREAKDOWN
+===============================================================================
+
+BV returns an array of nullable strings, filtered to remove nulls:
+
+  Section Builder     Purpose
+  ─────────────────  ────────────────────────────────────────────────────
+  H8z(O)             Identity: "You are an interactive CLI tool..."
+  O8z(O)             Tone/style: "Only use emojis if explicitly requested..."
+  $8z(J)             Task Management (TodoWrite) instructions
+  _8z(J)             Asking questions (UserMessage tool) instructions
+  wzq()              Hooks system explanation
+  J8z(O,J)           Coding task instructions ("Use Edit/Read tools...")
+  X8z()              System reminders & context window management
+  D8z(J,D)           Agent/skill tool usage instructions
+  GV6                Security policy (CTF, authorized testing, etc.)
+  j8z(J)             TodoWrite emphasis ("IMPORTANT: Always use...")
+  M8z()              Code references format (file_path:line_number)
+  [MP1]              Global cache marker (conditional)
+  Hzq()              Past session access instructions (conditional)
+  CDA()              Memory system instructions (conditional)
+  Ozq()              (Currently returns null - placeholder)
+  $                  Environment info (cwd, platform, date, model, etc.)
+  $zq(lang)          Language instruction ("Always respond in...")
+  _zq(O)             Output style instructions (if configured)
+  Jzq(Y)             MCP server instructions (if connected)
+  Wzq()              Scratchpad directory instructions (conditional)
+
+===============================================================================
+6. SIMPLIFIED BV/OD VARIANT: zzq() (for "tengu_vinteuil_phrase" experiments)
+===============================================================================
+
+async function zzq(A,q,K,Y){if(M6(void 0))return["You are Claude Code, Anthropic's official CLI for Claude."];let z=y6(),[w,H,O]=await Promise.all([rT(z),fbA(),T8z(q,K)]),$=Lq(),_=new Set(A.map((J)=>J.name));return[W8z(H),P8z(_),H===null||H.keepCodingInstructions===!0?G8z():null,Z8z(),f8z(_,w),V8z(),...M6(process.env.CLAUDE_CODE_FORCE_GLOBAL_CACHE)||r8("tengu_system_prompt_global_cache",!1)?[MP1]:[],Hzq(),CDA(),Ozq(),O,$zq($.language),_zq(H),Jzq(Y),Wzq()].filter((J)=>J!==null)}
+
+===============================================================================
+7. ENVIRONMENT SECTION BUILDER: Dzq() (the $ variable in BV's return)
+===============================================================================
+
+async function Dzq(A,q){let[K,Y]=await Promise.all([Zj(),Mzq()]),z=Qt6(A),w=z?`You are powered by the model named ${z}. The exact model ID is ${A}.`:`You are powered by the model ${A}.`,H=q&&q.length>0?`Additional working directories: ${q.join(", ")}
+`:"",O=jzq(A),$=O?`
+
+Assistant knowledge cutoff is ${O}.`:"",_=`
+
+<claude_background_info>
+The most recent frontier Claude model is ${z8z} (model ID: '${w8z}').
+</claude_background_info>`;return`Here is useful information about the environment you are running in:
+<env>
+Working directory: ${y6()}
+Is directory a git repo: ${K?"Yes":"No"}
+${H}Platform: ${xA.platform}
+OS Version: ${Y}
+Today's date: ${z_1()}
+</env>
+${w}${$}${_}`}
+
+===============================================================================
+8. COMPANION FUNCTIONS
+===============================================================================
+
+V5 / J_ — CLAUDE.md Loader (memoized):
+  J_ = YA(async () => {
+    let claudeMds = process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS ? null : hJA();
+    return { ...claudeMds ? { claudeMd: claudeMds } : {} };
+  })
+  
+  Returns: { claudeMd: string | null }
+  The claudeMd content is later spread into the system config.
+
+jH / __ — System Context Loader (memoized):
+  __ = YA(async () => {
+    let gitStatus = CLAUDE_CODE_REMOTE ? null : await FJA();
+    return { ...gitStatus ? { gitStatus } : {}, ...{} };
+  })
+  
+  Returns: { gitStatus: string | null }
+  Loads git repository status for injection into context.
+
+===============================================================================
+9. HOW THE SECTIONS BECOME THE SYSTEM PROMPT
+===============================================================================
+
+In ZVq.submitMessage() (Node) / Sp9.submitMessage() (Bun):
+
+  1. [U, g, x] = await Promise.all([BV(tools, model, dirs, mcpClients), J_(), __()])
+  2. d = { ...g, ...nOz(mcpClients) }   // Merge CLAUDE.md + MCP config
+  3. r = [...customSystemPrompt ? [customSystemPrompt] : U, ...appendSystemPrompt ? [appendSystemPrompt] : []]
+     // If custom prompt provided, skip tool sections; otherwise use BV's output
+  4. The array r (prompt sections) is passed to the API as the system prompt
+
+In the agY() function (used by sub-agents/SDK):
+
+  1. Y = await BV(tools, model, dirs, mcpClients)
+  2. z = SP1({ defaultSystemPrompt: Y, customSystemPrompt, appendSystemPrompt })
+  3. SP1 handles the merging/override logic
+
+===============================================================================
+10. KEY TAKEAWAY
+===============================================================================
+
+OD (minified name in Bun v2.1.83) = BV (minified name in Node v2.1.31)
+
+Original function name (inferred): getSystemPromptSections or buildSystemPromptSections
+
+It is the PRIMARY system prompt builder for Claude Code. It:
+  1. Checks for experimental flags ("tengu_vinteuil_phrase")
+  2. Loads skills, environment info, and tool descriptions in parallel
+  3. Assembles ~20 prompt sections covering identity, tools, coding instructions,
+     security policy, environment info, language, MCP servers, and memory
+  4. Returns a filtered array of non-null string sections
+
+The function is invisible in the Bun binary extraction because 28.1% of the
+codebase (including all core infrastructure) is compiled to Bun bytecode
+rather than shipped as readable JavaScript.

@@ -1,0 +1,203 @@
+================================================================================
+CLAUDE CODE v2.1.85 - ALL BUILT-IN TOOL PROMPTS
+================================================================================
+
+
+============================================================
+TOOL/SECTION: Bash
+============================================================
+function tXK(){let q=JH(),K=[...q?[]:[`File search: Use ${a_} (NOT find or ls)`,`Content search: Use ${G_} (NOT grep or rg)`],`Read files: Use ${C4} (NOT cat/head/tail)`,`Edit files: Use ${vq} (NOT sed/awk)`,`Write files: Use ${_5} (NOT echo >/cat <<EOF)`,"Communication: Output text directly (NOT echo/printf)"],_=q?"`cat`, `head`, `tail`, `sed`, `awk`, or `echo`":"`find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo`",z=[`If the commands are independent and can run in parallel, make multiple ${X4} tool calls in a single message. Example: if you need to run "git status" and "git diff", send a single message with two ${X4} tool calls in parallel.`,`If the commands depend on each other and must run sequentially, use a single ${X4} call with '&&' to chain them together.`,"Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.","DO NOT use newlines to separate commands (newlines are ok in quoted strings)."],Y=["Prefer to create a new commit rather than amending an existing commit.","Before running destructive operations (e.g., git reset --hard, git push --force, git checkout --), consider whether there is a safer alternative that achieves the same goal. Only use destructive operations when they are truly the best approach.","Never skip hooks (--no-verify) or bypass signing (--no-gpg-sign, -c commit.gpgsign=false) unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue."],$=["Do not sleep between commands that can run immediately — just run them.","If your command is long running and you would like to be notified when it finishes — use `run_in_background`. No sleep needed.","Do not retry failing commands in a sleep loop — diagnose the root cause.","If waiting for a background task you started with `run_in_background`, you will be notified when it completes — do not poll.","If you must poll an external process, use a check command (e.g. `gh run view`) rather than sleeping first.","If you must sleep, keep the duration short (1-5 seconds) to avoid blocking the user."],A=c8Y(),O=["If your command will create new directories or files, first use this tool to run `ls` to verify the parent directory exists and is the correct location.",'Always quote file paths that contain spaces with double quotes in your command (e.g., cd "path with spaces/file.txt")',"Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it.",`You may specify an optional timeout in milliseconds (up to ${au8()}ms / ${au8()/60000} minutes). By default, your command will timeout after ${ou8()}ms (${ou8()/60000} minutes).`,...A!==null?[A]:[],"Write a clear, concise description of what your command does. For simple commands, keep it brief (5-10 words). For complex commands (piped commands, obscure flags, or anything hard to understand at a glance), include enough context so that the user can understand what your command will do.","When issuing multiple commands:",z,"For git commands:",Y,"Avoid unnecessary `sleep` commands:",$,...q?["When using `find -regex` with alternation, put the longest alternative first. Example: use `'.*\\.\\(tsx\\|ts\\)'` not `'.*\\.\\(ts\\|tsx\\)'` — the second form silently skips `.tsx` files."]:[]];return["Executes a given bash command and returns its output.","","The working directory persists between commands, but shell state does not. The shell environment is initialized from the user's profile (bash or zsh).","",`IMPORTANT: Avoid using this tool to run ${_} commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user:`,"",...ln(K),`While the ${X4} tool can do similar things, it’s better to use the built-in tools as they provide a better user experience and make it easier to review tool calls and give permission.`,"","# Instructions",...ln(O),l8Y(),...sXK()?["",sXK()]:[]].join(`
+`)}
+
+============================================================
+TOOL/SECTION: Read
+============================================================
+async prompt(){let q=u$6(),K=q.includeMaxSizeInPrompt?`. Files larger than ${sq(q.maxSizeBytes)} will return an error; use offset and limit for larger files`:"",_=q.targetedRangeNudge?wl4:Ol4;return jl4(P4Y(),K,_)}
+
+============================================================
+TOOL/SECTION: Write
+============================================================
+function Hl4(){return`Writes a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.${b2_()}
+- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.`}
+
+============================================================
+TOOL/SECTION: Edit
+============================================================
+function h3K(){return VFz()}
+
+============================================================
+TOOL/SECTION: Glob
+============================================================
+async prompt(){return HT1}
+
+============================================================
+TOOL/SECTION: Grep
+============================================================
+function JT1(){return`A powerful search tool built on ripgrep
+
+  Usage:
+  - ALWAYS use ${G_} for search tasks. NEVER invoke \`grep\` or \`rg\` as a ${X4} command. The ${G_} tool has been optimized for correct permissions and access.
+  - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
+  - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
+  - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts
+  - Use ${jq} tool for open-ended searches requiring multiple rounds
+  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use \`interface\\{\\}\` to find \`interface{}\` in Go code)
+  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like \`struct \\{[\\s\\S]*?field\`, use \`multiline: true\`
+`}
+
+============================================================
+TOOL/SECTION: WebFetch
+============================================================
+async prompt(q){return`IMPORTANT: WebFetch WILL FAIL for authenticated or private URLs. Before using this tool, check if the URL points to an authenticated service (e.g. Google Docs, Confluence, Jira, GitHub). If so, look for a specialized MCP tool that provides authenticated access.
+${Jl4}`}
+
+============================================================
+TOOL/SECTION: WebSearch
+============================================================
+function Dl4(){return`
+- Allows Claude to search the web and use the results to inform responses
+- Provides up-to-date information for current events and recent data
+- Returns search result information formatted as search result blocks, including links as markdown hyperlinks
+- Use this tool for accessing information beyond Claude's knowledge cutoff
+- Searches are performed automatically within a single API call
+
+CRITICAL REQUIREMENT - You MUST follow this:
+  - After answering the user's question, you MUST include a "Sources:" section at the end of your response
+  - In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL)
+  - This is MANDATORY - never skip including sources in your response
+  - Example format:
+
+    [Your answer here]
+
+    Sources:
+    - [Source Title 1](https://example.com/1)
+    - [Source Title 2](https://example.com/2)
+
+Usage notes:
+  - Domain filtering is supported to include or block specific websites
+  - Web search is only available in the US
+
+IMPORTANT - Use the correct year in search queries:
+  - The current month is ${Ml4()}. You MUST use this year when searching for recent information, documentation, or current events.
+  - Example: If the user asks for "latest React docs", search for "React documentation" with the current year, NOT last year
+`}
+
+============================================================
+TOOL/SECTION: NotebookEdit
+============================================================
+async prompt(){return vYK}
+
+============================================================
+TOOL/SECTION: TodoWrite
+============================================================
+async prompt(){return K3K}
+
+============================================================
+TOOL/SECTION: TaskStop
+============================================================
+async prompt(){return GD4}
+
+============================================================
+TOOL/SECTION: SendUserMessage_prompt
+============================================================
+async prompt(){return aj1}
+
+============================================================
+TOOL/SECTION: Brief_description
+============================================================
+"Send a message the user will read. Text outside this tool is visible in the detail view, but most won't open it — the answer lives here.\n\n`message` supports markdown. `attachments` takes file paths (absolute or cwd-relative) for images, diffs, logs.\n\n`status` labels intent: 'normal' when replying to what they just asked; 'proactive' when you're initiating — a scheduled task finished, a blocker surfaced during background work, you need input on something they haven't asked about. Set it honestly; downstream routing uses it.
+
+============================================================
+TOOL/SECTION: Talking_to_user
+============================================================
+## Talking to the user
+
+${"SendUserMessage"} is where your replies go. Text outside it is visible if the user expands the detail view, but most won't — assume unread. Anything you want them to actually see goes through ${"SendUserMessage"}. The failure mode: the real answer lives in plain text while ${"SendUserMessage"} just says "done!" — they see "done!" and miss everything.
+
+So: every time the user says something, the reply they actually read comes through ${"SendUserMessage"}. Even for "hi". Even for "thanks".
+
+If you can answer right away, send the answer. If you need to go look — run a command, read files, check something — ack first in one line ("On it — checking the test output"), then work, then send the result. Without the ack they're staring at a spinner.
+
+For longer work: ack → work → result. Between those, send a checkpoint when something useful happened — a decision you made, a surprise you hit, a phase boundary. Skip the filler ("running tests...") — a checkpoint earns its place by carrying information.
+
+Keep messages tight — the decision, the file:line, the PR number. Second person always ("your config"), never third.
+
+============================================================
+TOOL/SECTION: SendMessage
+============================================================
+function ljK(){return`
+# SendMessage
+
+Send a message to another agent.
+
+\`\`\`json
+{"to": "researcher", "summary": "assign task 1", "message": "start on task #1"}
+\`\`\`
+
+| \`to\` | |
+|---|---|
+| \`"researcher"\` | Teammate by name |
+| \`"*"\` | Broadcast to all teammates — expensive (linear in team size), use only when everyone genuinely needs it |${""}
+
+Your plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from teammates are delivered automatically; you don't check an inbox. Refer to teammates by name, never by UUID. When relaying, don't quote the original — it's already rendered to the user.${""}
+
+## Protocol responses (legacy)
+
+If you receive a JSON message with \`type: "shutdown_request"\` or \`type: "plan_approval_request"\`, respond with the matching \`_response\` type — echo the \`request_id\`, set \`approve\` true/false:
+
+\`\`\`json
+{"to": "team-lead", "message": {"type": "shutdown_response", "request_id": "...", "approve": true}}
+{"to": "researcher", "message": {"type": "plan_approval_response", "request_id": "...", "approve": false, "feedback": "add error handling"}}
+\`\`\`
+
+Approving shutdown terminates your process. Rejecting plan sends the teammate back to revise. Don't originate \`shutdown_request\` unless asked. Don't send structured JSON status messages — use TaskUpdate.
+`.trim()}
+
+============================================================
+TOOL/SECTION: Plan/TodoWrite_legacy
+============================================================
+function awK(){let q=S4()?" and potentially assigned to teammates":"",K=S4()?"- Include enough detail in the description for another agent to understand and complete the task\n- New tasks are created with status 'pending' and no owner - use TaskUpdate with the `owner` parameter to assign them\n":"";return`Use this tool to create a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+It also helps the user understand the progress of the task and overall progress of their requests.
+
+## When to Use This Tool
+
+Use this tool proactively in these scenarios:
+
+- Complex multi-step tasks - When a task requires 3 or more distinct steps or actions
+- Non-trivial and complex tasks - Tasks that require careful planning or multiple operations${q}
+- Plan mode - When using plan mode, create a task list to track the work
+- User explicitly requests todo list - When the user directly asks you to use the todo list
+- User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)
+- After receiving new instructions - Immediately capture user requirements as tasks
+- When you start working on a task - Mark it as in_progress BEFORE beginning work
+- After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation
+
+## When NOT to Use This Tool
+
+Skip using this tool when:
+- There is only a single, straightforward task
+- The task is trivial and tracking it provides no organizational benefit
+- The task can be completed in less than 3 trivial steps
+- The task is purely conversational or informational
+
+NOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.
+
+## Task Fields
+
+- **subject**: A brief, actionable title in imperative form (e.g., "Fix authentication bug in login flow")
+- **description**: What needs to be done
+- **activeForm** (optional): Present continuous form shown in the spinner when the task is in_progress (e.g., "Fixing authentication bug"). If omitted, the spinner shows the subject instead.
+
+All tasks are created with status \`pending\`.
+
+## Tips
+
+- Create tasks with clear, specific subjects that describe the outcome
+- After creating tasks, use TaskUpdate to set up dependencies (blocks/blockedBy) if needed
+${K}- Check TaskList first to avoid creating duplicate tasks
+`}
